@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   openPdfDialog: () => ipcRenderer.invoke('open-pdf-dialog'),
   saveQuotePdf: (html) => ipcRenderer.invoke('save-quote-pdf', html),
   printPdf: (buffer, fileName) => ipcRenderer.invoke('print-pdf', buffer, fileName),
+  verifyPin: (hash) => ipcRenderer.invoke('verify-pin', hash), // <--- ADD THIS LINE
   hasPin: () => ipcRenderer.invoke('has-pin'),
   launchMain: () => ipcRenderer.invoke('launch-main'),
   saveJob: (job) => ipcRenderer.invoke('save-job', job),

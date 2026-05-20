@@ -6,29 +6,63 @@
 <title>PrintMaster — Login</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0ede8; display: flex; align-items: center; justify-content: center; height: 100vh; user-select: none; -webkit-app-region: drag; }
-  .card { background: #fff; border-radius: 16px; padding: 2.5rem 2rem; width: 340px; box-shadow: 0 4px 24px rgba(0,0,0,0.10); -webkit-app-region: no-drag; }
+  body { 
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
+    background: #f0ede8; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    height: 100vh; 
+    user-select: none;
+    overflow: hidden;
+    -webkit-app-region: no-drag; /* Force body to be non-draggable */
+  }
+  .drag-handle {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    -webkit-app-region: drag; /* Only this small bar at the top is draggable */
+    z-index: 9999;
+  }
+  .card { 
+    background: #fff; 
+    border-radius: 16px; 
+    padding: 2.5rem 2rem; 
+    width: 340px; 
+    box-shadow: 0 4px 24px rgba(0,0,0,0.10 );
+    position: relative;
+    z-index: 1;
+    -webkit-app-region: no-drag;
+  }
   .logo { text-align: center; margin-bottom: 2rem; }
   .logo-mark { width: 64px; height: 64px; background: #1a1a1a; border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; }
   .logo-mark svg { width: 36px; height: 36px; fill: none; stroke: #fff; stroke-width: 1.8; }
   .logo h1 { font-size: 20px; font-weight: 600; color: #1a1a1a; letter-spacing: -0.3px; }
   .logo p { font-size: 13px; color: #888; margin-top: 3px; }
-  .pin-label { font-size: 13px; color: #555; margin-bottom: 10px; text-align: center; }
   .pin-dots { display: flex; gap: 12px; justify-content: center; margin-bottom: 1.5rem; }
   .dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid #ccc; transition: all 0.15s; }
   .dot.filled { background: #1a1a1a; border-color: #1a1a1a; }
   .numpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .key { background: #f5f4f1; border: none; border-radius: 10px; height: 52px; font-size: 20px; font-weight: 400; cursor: pointer; transition: all 0.1s; color: #1a1a1a; }
+  .key { 
+    background: #f5f4f1; 
+    border: none; 
+    border-radius: 10px; 
+    height: 52px; 
+    font-size: 20px; 
+    cursor: pointer; 
+    color: #1a1a1a;
+    -webkit-app-region: no-drag !important; /* Force clickability */
+    pointer-events: auto !important;
+  }
   .key:hover { background: #ebe9e4; }
-  .key:active { transform: scale(0.95); background: #ddd; }
-  .key.del { font-size: 14px; color: #888; }
-  .key.empty { background: transparent; cursor: default; }
+  .key:active { transform: scale(0.95); }
   .error { color: #c0392b; font-size: 13px; text-align: center; margin-top: 14px; min-height: 18px; }
-  .shake { animation: shake 0.35s; }
-  @keyframes shake { 0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-6px)} 40%,80%{transform:translateX(6px)} }
 </style>
 </head>
 <body>
+<div class="drag-handle"></div>
 <div class="card">
   <div class="logo">
     <div class="logo-mark">
@@ -37,14 +71,10 @@
     <h1>PrintMaster</h1>
     <p>Enter your PIN to continue</p>
   </div>
-  <div class="pin-label">4-digit PIN</div>
   <div class="pin-dots" id="dots">
-    <div class="dot" id="d0"></div>
-    <div class="dot" id="d1"></div>
-    <div class="dot" id="d2"></div>
-    <div class="dot" id="d3"></div>
+    <div class="dot" id="d0"></div><div class="dot" id="d1"></div><div class="dot" id="d2"></div><div class="dot" id="d3"></div>
   </div>
-  <div class="numpad" id="numpad">
+  <div class="numpad">
     <button class="key" onclick="press('1')">1</button>
     <button class="key" onclick="press('2')">2</button>
     <button class="key" onclick="press('3')">3</button>
@@ -54,12 +84,12 @@
     <button class="key" onclick="press('7')">7</button>
     <button class="key" onclick="press('8')">8</button>
     <button class="key" onclick="press('9')">9</button>
-    <button class="key empty"></button>
+    <div class="key" style="background:transparent;cursor:default;"></div>
     <button class="key" onclick="press('0')">0</button>
-    <button class="key del" onclick="del()">⌫</button>
+    <button class="key" onclick="del()">⌫</button>
   </div>
   <div class="error" id="err"></div>
 </div>
-<script src="../renderer/login.js"></script>
+<script src="login.js"></script> <!-- Fixed path: removed ../renderer/ -->
 </body>
 </html>
