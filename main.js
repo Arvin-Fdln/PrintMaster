@@ -53,12 +53,12 @@ function createLoginWindow() {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 900,
-    minHeight: 600,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    frame: process.platform !== 'darwin',
+    width: 1280,
+    height: 860,
+    minWidth: 1000,
+    minHeight: 640,
+    frame: false,
+    titleBarStyle: 'hidden',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -78,48 +78,17 @@ function createMainWindow() {
     if (loginWindow) loginWindow.close();
   });
 
-  const menuTemplate = [
-    {
-      label: 'PrintMaster',
-      submenu: [
-        { label: 'About PrintMaster', click: () => mainWindow.webContents.send('show-about') },
-        { type: 'separator' },
-        { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => mainWindow.webContents.send('open-settings') },
-        { type: 'separator' },
-        { label: 'Quit', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }
-      ]
-    },
-    {
-      label: 'File',
-      submenu: [
-        { label: 'Open PDF...', accelerator: 'CmdOrCtrl+O', click: () => mainWindow.webContents.send('trigger-open') },
-        { label: 'New Job', accelerator: 'CmdOrCtrl+N', click: () => mainWindow.webContents.send('new-job') },
-        { type: 'separator' },
-        { label: 'Export Quote as PDF', accelerator: 'CmdOrCtrl+E', click: () => mainWindow.webContents.send('export-quote') }
-      ]
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' }
-      ]
-    }
-  ];
-
-  const menu = Menu.buildFromTemplate(menuTemplate);
-  Menu.setApplicationMenu(menu);
+  // Remove native menu bar entirely — everything handled in-app
+  Menu.setApplicationMenu(null);
 }
 
 // IPC Handlers
 ipcMain.handle('get-store', (_, key) => store.get(key));
 ipcMain.handle('set-store', (_, key, value) => { store.set(key, value); return true; });
 ipcMain.handle('get-all-store', () => store.store);
+
+// Store file paths in main process — avoids buffer serialization issues over IPC
+const openedFilePaths = new Map();
 
 ipcMain.handle('open-pdf-dialog', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -130,7 +99,16 @@ ipcMain.handle('open-pdf-dialog', async () => {
   if (result.canceled) return null;
   return result.filePaths.map(filePath => {
     const data = fs.readFileSync(filePath);
-    return { buffer: data.buffer, name: path.basename(filePath), size: data.length };
+    // Use Buffer.from to get a proper copy — NOT data.buffer which includes pool memory
+    const properBuffer = Buffer.from(data);
+    const id = Date.now() + Math.random().toString(36).slice(2);
+    openedFilePaths.set(id, filePath);
+    return {
+      buffer: Array.from(properBuffer), // serialize as plain array — safe over IPC
+      name: path.basename(filePath),
+      size: data.length,
+      fileId: id
+    };
   });
 });
 
@@ -159,40 +137,69 @@ ipcMain.handle('launch-main', () => {
   createMainWindow();
 });
 
-ipcMain.handle('print-pdf', async (_, bufferData, fileName) => {
+ipcMain.handle('print-pdf', async (_, printData) => {
   try {
-    const os = require('os');
-    // bufferData may come as ArrayBuffer or plain object — convert safely
-    const buffer = Buffer.from(bufferData instanceof Buffer ? bufferData : new Uint8Array(bufferData));
+    // printData: { pages: [{dataUrl, widthPt, heightPt}], fileName }
+    // Build print HTML with exact physical page sizes
+    const pageDivs = printData.pages.map(pg => {
+      // Convert PDF points to inches (1 pt = 1/72 inch)
+      const wIn = (pg.widthPt / 72).toFixed(4);
+      const hIn = (pg.heightPt / 72).toFixed(4);
+      return `<div class="page" style="width:${wIn}in;height:${hIn}in;">
+        <img src="${pg.dataUrl}" style="width:100%;height:100%;display:block;">
+      </div>`;
+    }).join('\n');
 
-    if (!buffer || buffer.length === 0) {
-      return { ok: false, error: 'Empty buffer received — PDF data was not transferred correctly.' };
-    }
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:white; }
+  .page {
+    display: block;
+    overflow: hidden;
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+  .page:last-child { page-break-after: auto; }
+  .page img { display:block; width:100%; height:100%; object-fit:fill; }
+  @page { margin: 0; }
+  @media print { body { margin:0; } }
+</style></head><body>${pageDivs}</body></html>`;
 
-    const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const tmpPath = path.join(os.tmpdir(), `printmaster_${Date.now()}_${safeName}`);
-    fs.writeFileSync(tmpPath, buffer);
+    const printWin = new BrowserWindow({
+      width: 900, height: 1100,
+      show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true }
+    });
 
-    // Verify file was written
-    const stat = fs.statSync(tmpPath);
-    if (stat.size === 0) {
-      return { ok: false, error: 'Failed to write temp file.' };
-    }
+    await printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    await new Promise(r => setTimeout(r, 600));
 
-    // shell.openPath is the most reliable cross-platform method.
-    // It opens the PDF in the default viewer (Edge/Adobe/Foxit on Windows).
-    // User then uses Ctrl+P in that viewer for full print control.
-    const result = await shell.openPath(tmpPath);
-    if (result) {
-      // result is non-empty string = error message from OS
-      return { ok: false, error: result };
-    }
+    // Use first page's size for the print page setup
+    const firstPage = printData.pages[0];
+    const wMicrons = Math.round((firstPage.widthPt / 72) * 25400);
+    const hMicrons = Math.round((firstPage.heightPt / 72) * 25400);
 
-    setTimeout(() => { try { fs.unlinkSync(tmpPath); } catch(e) {} }, 60000);
-    return { ok: true };
+    return new Promise((resolve) => {
+      printWin.webContents.print({
+        silent: false,
+        printBackground: true,
+        color: true,
+        pageSize: { width: wMicrons, height: hMicrons },
+        margins: { marginType: 'none' }
+      }, (success, reason) => {
+        printWin.close();
+        resolve(success ? { ok: true } : { ok: false, error: reason || 'Cancelled' });
+      });
+    });
   } catch (err) {
     return { ok: false, error: err.message };
   }
+});
+
+ipcMain.handle('print-pdf-buffer', async (_, bufferArray, fileName) => {
+  // kept as fallback, not used in main flow anymore
+  return { ok: false, error: 'Use print-pdf instead.' };
 });
 
 ipcMain.handle('save-job', (_, job) => {  const history = store.get('jobHistory', []);
@@ -209,6 +216,10 @@ ipcMain.handle('delete-job', (_, id) => {
 });
 
 ipcMain.handle('get-theme', () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+ipcMain.handle('window-minimize', () => mainWindow?.minimize());
+ipcMain.handle('window-maximize', () => { if (mainWindow?.isMaximized()) mainWindow.unmaximize(); else mainWindow?.maximize(); });
+ipcMain.handle('window-close', () => mainWindow?.close());
+ipcMain.handle('get-version', () => app.getVersion());
 
 app.whenReady().then(() => {
   const hasPin = !!store.get('pinHash', '');

@@ -8,8 +8,21 @@
 </head>
 <body class="theme-light">
 
+<!-- CUSTOM TITLE BAR -->
+<div class="titlebar" id="titlebar">
+  <div class="titlebar-drag"></div>
+  <div class="titlebar-controls">
+    <button class="tb-btn tb-min" onclick="window.api.windowMinimize()" title="Minimize">─</button>
+    <button class="tb-btn tb-max" onclick="window.api.windowMaximize()" title="Maximize">□</button>
+    <button class="tb-btn tb-close" onclick="window.api.windowClose()" title="Close">✕</button>
+  </div>
+</div>
+
+<!-- APP SHELL -->
+<div class="app-shell">
+
 <!-- SIDEBAR -->
-<aside class="sidebar" id="sidebar">
+<aside class="sidebar">
   <div class="sidebar-top">
     <div class="app-logo">
       <div class="logo-icon">
@@ -23,17 +36,13 @@
       </div>
       <div>
         <div class="app-name">PrintMaster</div>
-        <div class="app-ver">v1.1.0</div>
+        <div class="app-ver" id="app-ver">v1.9.0</div>
       </div>
     </div>
     <nav class="nav">
       <button class="nav-item active" data-page="scan" onclick="gotoPage('scan')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3H5a2 2 0 00-2 2v4"/><path d="M15 3h4a2 2 0 012 2v4"/><path d="M9 21H5a2 2 0 01-2-2v-4"/><path d="M15 21h4a2 2 0 002-2v-4"/><rect x="7" y="8" width="10" height="8" rx="1"/></svg>
         Scan & Analyze
-      </button>
-      <button class="nav-item" data-page="quote" onclick="gotoPage('quote')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
-        Quote
       </button>
       <button class="nav-item" data-page="history" onclick="gotoPage('history')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -46,181 +55,248 @@
     </nav>
   </div>
   <div class="sidebar-bottom">
-    <div class="business-card" id="biz-card">
-      <div class="biz-name" id="sb-biz-name">My Print Shop</div>
-      <div class="biz-sub" id="sb-biz-contact"></div>
-    </div>
+    <div class="biz-name" id="sb-biz-name">My Print Shop</div>
+    <div class="biz-sub" id="sb-biz-contact"></div>
   </div>
 </aside>
 
-<!-- MAIN -->
-<main class="main-content">
+<!-- MAIN AREA -->
+<div class="main-area">
 
-  <!-- SCAN PAGE -->
+  <!-- ═══════════════ SCAN PAGE ═══════════════ -->
   <div id="page-scan" class="page active"
     ondragover="pageOver(event)" ondragleave="pageOut(event)" ondrop="pageDrop(event)">
 
-    <!-- Always-on drag overlay (shows on top of results too) -->
     <div id="drag-overlay" class="drag-overlay">
       <div class="drag-overlay-inner">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         <div class="drag-overlay-title">Drop to add PDF</div>
       </div>
     </div>
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">Scan & Analyze</h1>
-        <p class="page-sub">Upload one or more PDFs to detect color and calculate print cost</p>
-      </div>
-      <div class="header-actions" id="scan-header-actions">
-        <button class="btn" id="add-pdf-btn" onclick="openPdfDialog()" style="display:none;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Add PDF
-        </button>
-        <button class="btn btn-primary" id="open-btn" onclick="openPdfDialog()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          Open PDF
-        </button>
-      </div>
-    </div>
 
-    <div id="drop-zone" class="drop-zone" onclick="openPdfDialog()">
-      <div class="dz-inner">
-        <div class="dz-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    <!-- TWO-COLUMN LAYOUT -->
+    <div class="scan-layout">
+
+      <!-- LEFT: scan content -->
+      <div class="scan-left">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Scan & Analyze</h1>
+            <p class="page-sub">Upload PDFs to detect color and calculate print cost</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn" id="add-pdf-btn" onclick="openPdfDialog()" style="display:none;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add PDF
+            </button>
+            <button class="btn btn-primary" id="open-btn" onclick="openPdfDialog()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Open PDF
+            </button>
+          </div>
         </div>
-        <div class="dz-title">Drop PDF(s) here</div>
-        <div class="dz-sub">or click to browse — supports multiple PDFs at once</div>
+
+        <!-- DROP ZONE -->
+        <div id="drop-zone" class="drop-zone" onclick="openPdfDialog()">
+          <div class="dz-inner">
+            <div class="dz-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+            <div class="dz-title">Drop PDF(s) here</div>
+            <div class="dz-sub">or click to browse</div>
+          </div>
+        </div>
+
+        <!-- PROGRESS -->
+        <div id="scan-progress" class="scan-card" style="display:none;">
+          <div class="scan-file-info" id="scan-file-info"></div>
+          <div class="progress-wrap">
+            <div class="progress-bar-bg"><div class="progress-bar-fill" id="prog-fill"></div></div>
+            <div class="progress-label" id="prog-label">Starting...</div>
+          </div>
+        </div>
+
+        <!-- RESULTS -->
+        <div id="scan-results" style="display:none;">
+          <div class="pdf-tabs-wrap"><div class="pdf-tabs" id="pdf-tabs"></div></div>
+          <div class="metrics-row" id="metrics-row"></div>
+          <div class="results-toolbar">
+            <div class="results-file" id="results-file"></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <label class="copies-label">Copies:
+                <input type="number" id="copies-input" class="copies-input" value="1" min="1" max="999" onchange="recalcCopies()">
+              </label>
+              <button class="btn btn-sm" onclick="resetScan()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+                Clear All
+              </button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="page-table">
+              <thead>
+                <tr>
+                  <th style="width:36px;">#</th>
+                  <th style="width:68px;">Preview</th>
+                  <th style="width:68px;">Include</th>
+                  <th>Color</th>
+                  <th>Size</th>
+                  <th>Print as</th>
+                  <th>Rate</th>
+                  <th style="text-align:right;">Cost</th>
+                </tr>
+              </thead>
+              <tbody id="page-tbody"></tbody>
+            </table>
+          </div>
+          <div class="total-bar">
+            <div class="total-bar-left"><span id="total-summary"></span></div>
+            <div class="total-bar-right">
+              <span class="total-label">Total</span>
+              <span class="total-amount" id="grand-total"></span>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
 
-    <div id="scan-progress" class="scan-card" style="display:none;">
-      <div class="scan-file-info" id="scan-file-info"></div>
-      <div class="progress-wrap">
-        <div class="progress-bar-bg"><div class="progress-bar-fill" id="prog-fill"></div></div>
-        <div class="progress-label" id="prog-label">Starting...</div>
-      </div>
-    </div>
+      <!-- RIGHT: action sidebar -->
+      <div class="action-sidebar" id="action-sidebar">
 
-    <div id="scan-results" style="display:none;">
-
-      <!-- PDF TABS -->
-      <div class="pdf-tabs-wrap">
-        <div class="pdf-tabs" id="pdf-tabs"></div>
-      </div>
-
-      <div class="metrics-row" id="metrics-row"></div>
-
-      <div class="results-toolbar">
-        <div class="results-file" id="results-file"></div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <label class="copies-label">Copies:
-            <input type="number" id="copies-input" class="copies-input" value="1" min="1" max="999" onchange="recalcCopies()">
-          </label>
-          <button class="btn btn-sm" onclick="resetScan()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
-            Clear All
+        <!-- SIDEBAR TABS -->
+        <div class="sb-tabs">
+          <button class="sb-tab active" data-tab="quote" onclick="switchSbTab('quote')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Live Quote
           </button>
-          <button class="btn btn-primary btn-sm" onclick="gotoPage('quote')">
-            View Quote →
+          <button class="sb-tab" data-tab="preview" onclick="switchSbTab('preview')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            Preview
+          </button>
+          <button class="sb-tab" data-tab="extras" onclick="switchSbTab('extras')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            Extras
           </button>
         </div>
-      </div>
 
-      <div class="table-wrap">
-        <table class="page-table">
-          <thead>
-            <tr>
-              <th style="width:44px;">#</th>
-              <th style="width:80px;">Preview</th>
-              <th style="width:80px;">Include</th>
-              <th>Color</th>
-              <th>Detected size</th>
-              <th>Print as</th>
-              <th>Rate</th>
-              <th style="text-align:right;">Cost</th>
-            </tr>
-          </thead>
-          <tbody id="page-tbody"></tbody>
-        </table>
-      </div>
-
-      <div class="total-bar">
-        <div class="total-bar-left"><span id="total-summary"></span></div>
-        <div class="total-bar-right">
-          <span class="total-label">Total</span>
-          <span class="total-amount" id="grand-total"></span>
+        <!-- LIVE QUOTE TAB -->
+        <div class="sb-panel active" id="sb-quote">
+          <div class="sb-empty" id="sq-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" width="36" height="36"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <p>Load a PDF to see<br>the live quote</p>
+          </div>
+          <div id="sq-content" style="display:none; height:100%; display:none; flex-direction:column;">
+            <!-- Customer -->
+            <div class="sq-section">
+              <div class="sq-label">Customer</div>
+              <input type="text" id="sq-customer" class="sq-input" placeholder="Customer name (optional)">
+              <input type="text" id="sq-contact" class="sq-input" placeholder="Contact / phone" style="margin-top:6px;">
+            </div>
+            <!-- Receipt lines -->
+            <div class="sq-section" style="flex:1;overflow-y:auto;">
+              <div class="sq-label">Breakdown</div>
+              <div id="sq-lines" class="sq-lines"></div>
+            </div>
+            <!-- Totals -->
+            <div class="sq-totals" id="sq-totals"></div>
+            <!-- Actions -->
+            <div class="sq-actions">
+              <button class="btn btn-sm" onclick="printQuoteReceipt()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                Print Quote
+              </button>
+              <button class="btn btn-sm" onclick="saveJobFromQuote()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+                Save Job
+              </button>
+              <button class="btn-print-big" onclick="printPdf()" style="width:100%;margin-top:6px;justify-content:center;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                Print PDF
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div class="print-btn-row">
-        <button class="btn-print-big" onclick="printPdf()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-          Print PDF
-        </button>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- QUOTE PAGE -->
-  <div id="page-quote" class="page">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">Quote</h1>
-        <p class="page-sub">Review and print the customer quotation</p>
-      </div>
-      <div class="header-actions">
-        <button class="btn" onclick="window.print()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-          Print Quote
-        </button>
-        <button class="btn btn-primary" onclick="saveJobFromQuote()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-          Save Job
-        </button>
-      </div>
-    </div>
-    <div id="quote-empty" class="empty-state">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" width="48" height="48"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-      <p>No PDF scanned yet.<br>Go to Scan & Analyze to get started.</p>
-      <button class="btn btn-primary" onclick="gotoPage('scan')">Go to Scan ↗</button>
-    </div>
-    <div id="quote-content" style="display:none;" class="quote-sheet">
-      <div class="quote-header-section">
-        <div class="quote-biz">
-          <div class="quote-biz-name" id="q-biz-name"></div>
-          <div class="quote-biz-meta" id="q-biz-meta"></div>
+        <!-- MASTER PREVIEW TAB -->
+        <div class="sb-panel" id="sb-preview">
+          <div class="sb-empty" id="sp-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" width="36" height="36"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <p>Click any row in the<br>table to preview that page</p>
+          </div>
+          <div id="sp-content" style="display:none;height:100%;flex-direction:column;">
+            <div class="sp-header" id="sp-header"></div>
+            <div class="sp-img-wrap">
+              <img id="sp-img" src="" alt="Page preview">
+            </div>
+            <div class="sp-nav">
+              <button class="btn btn-sm" id="sp-prev" onclick="spShift(-1)">← Prev</button>
+              <span id="sp-counter" style="font-size:12px;color:var(--text-secondary);"></span>
+              <button class="btn btn-sm" id="sp-next" onclick="spShift(1)">Next →</button>
+            </div>
+          </div>
         </div>
-        <div class="quote-meta-right">
-          <div class="quote-label-big">QUOTATION</div>
-          <div class="quote-ref" id="q-ref"></div>
-          <div class="quote-date" id="q-date"></div>
-        </div>
-      </div>
-      <hr class="quote-divider">
-      <div class="quote-file-row" id="q-file-row"></div>
-      <table class="quote-table" id="q-table">
-        <thead>
-          <tr><th>Description</th><th>Unit price</th><th>Qty</th><th style="text-align:right;">Amount</th></tr>
-        </thead>
-        <tbody id="q-tbody"></tbody>
-      </table>
-      <div class="quote-totals" id="q-totals"></div>
-      <div class="quote-footer">
-        <p>This quotation is valid for 7 days from the date issued.</p>
-        <p>Thank you for your business!</p>
-      </div>
-    </div>
-  </div>
 
-  <!-- HISTORY PAGE -->
+        <!-- EXTRAS TAB -->
+        <div class="sb-panel" id="sb-extras">
+          <div style="padding:16px;overflow-y:auto;height:100%;">
+            <div class="sq-label" style="margin-bottom:12px;">Finishing & Surcharges</div>
+
+            <div class="extra-group">
+              <div class="extra-label">Binding</div>
+              <select class="extra-sel" id="ex-binding" onchange="updateExtras()">
+                <option value="0">None</option>
+                <option value="15">Spiral Binding (+₱15)</option>
+                <option value="10">Stapled (+₱10)</option>
+                <option value="40">GBC Binding (+₱40)</option>
+              </select>
+            </div>
+
+            <div class="extra-group">
+              <div class="extra-label">Paper Type</div>
+              <select class="extra-sel" id="ex-paper" onchange="updateExtras()">
+                <option value="0">Standard 70gsm</option>
+                <option value="3">Premium 80gsm (+₱3/pg)</option>
+                <option value="6">Premium 100gsm (+₱6/pg)</option>
+                <option value="10">Glossy (+₱10/pg)</option>
+                <option value="15">Cardstock (+₱15/pg)</option>
+              </select>
+            </div>
+
+            <div class="extra-group">
+              <div class="extra-label">Lamination</div>
+              <select class="extra-sel" id="ex-lam" onchange="updateExtras()">
+                <option value="0">None</option>
+                <option value="10">Matte Lamination (+₱10/pg)</option>
+                <option value="12">Glossy Lamination (+₱12/pg)</option>
+              </select>
+            </div>
+
+            <div class="extra-group">
+              <div class="extra-label">Rush / Express Fee</div>
+              <label class="toggle-row-extra">
+                <span>20% Express Surcharge</span>
+                <label class="include-toggle"><input type="checkbox" id="ex-rush" onchange="updateExtras()"><span class="include-slider"></span></label>
+              </label>
+            </div>
+
+            <div class="extra-group">
+              <div class="extra-label">Custom Add-on (₱)</div>
+              <input type="number" id="ex-custom" class="sq-input" placeholder="0.00" min="0" onchange="updateExtras()" value="0">
+              <input type="text" id="ex-custom-label" class="sq-input" placeholder="Label (e.g. CD burning)" style="margin-top:5px;" oninput="updateExtras()">
+            </div>
+
+            <div class="extras-total-box" id="extras-total-box" style="display:none;">
+              <div class="sq-label">Extras Total</div>
+              <div id="extras-total-val" style="font-size:20px;font-weight:600;color:var(--text-primary);margin-top:4px;"></div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end action-sidebar -->
+    </div><!-- end scan-layout -->
+  </div><!-- end page-scan -->
+
+  <!-- ═══════════════ HISTORY PAGE ═══════════════ -->
   <div id="page-history" class="page">
     <div class="page-header">
-      <div>
-        <h1 class="page-title">Job History</h1>
-        <p class="page-sub">Past print jobs and quotes</p>
-      </div>
+      <div><h1 class="page-title">Job History</h1><p class="page-sub">Past print jobs and quotes</p></div>
       <div class="header-actions">
         <button class="btn btn-danger-outline" onclick="clearHistory()">Clear All</button>
       </div>
@@ -228,7 +304,7 @@
     <div id="history-list"></div>
   </div>
 
-  <!-- SETTINGS PAGE -->
+  <!-- ═══════════════ SETTINGS PAGE ═══════════════ -->
   <div id="page-settings" class="page">
     <div class="page-header">
       <div><h1 class="page-title">Settings</h1><p class="page-sub">Business info, pricing, and security</p></div>
@@ -236,7 +312,6 @@
         <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
       </div>
     </div>
-
     <div class="settings-grid">
       <div class="settings-section">
         <div class="section-title">Business Information</div>
@@ -245,21 +320,18 @@
         <div class="form-group"><label>Contact / Phone</label><input type="text" id="s-contact" placeholder="+63 912 345 6789"></div>
         <div class="form-group"><label>Currency Symbol</label><input type="text" id="s-currency" placeholder="₱" style="width:80px;"></div>
       </div>
-
       <div class="settings-section">
         <div class="section-title">Pricing — Black & White</div>
         <div class="form-group inline"><label>Letter / A4 (per page)</label><div class="price-input-wrap"><span class="currency-sym" id="cs1">₱</span><input type="number" id="p-bw-letter" value="3" min="0" step="0.5"></div></div>
         <div class="form-group inline"><label>Legal (per page)</label><div class="price-input-wrap"><span class="currency-sym" id="cs2">₱</span><input type="number" id="p-bw-legal" value="4" min="0" step="0.5"></div></div>
         <div class="form-group inline"><label>A3 / Tabloid (per page)</label><div class="price-input-wrap"><span class="currency-sym" id="cs3">₱</span><input type="number" id="p-bw-a3" value="6" min="0" step="0.5"></div></div>
       </div>
-
       <div class="settings-section">
         <div class="section-title">Pricing — Color</div>
         <div class="form-group inline"><label>Letter / A4 (per page)</label><div class="price-input-wrap"><span class="currency-sym" id="cs4">₱</span><input type="number" id="p-color-letter" value="15" min="0" step="0.5"></div></div>
         <div class="form-group inline"><label>Legal (per page)</label><div class="price-input-wrap"><span class="currency-sym" id="cs5">₱</span><input type="number" id="p-color-legal" value="20" min="0" step="0.5"></div></div>
         <div class="form-group inline"><label>A3 / Tabloid (per page)</label><div class="price-input-wrap"><span class="currency-sym" id="cs6">₱</span><input type="number" id="p-color-a3" value="30" min="0" step="0.5"></div></div>
       </div>
-
       <div class="settings-section">
         <div class="section-title">Print Defaults</div>
         <div class="form-group"><label>Default Paper Size</label>
@@ -284,71 +356,66 @@
             <input type="range" id="s-color-sensitivity" min="1" max="10" value="5" style="flex:1;">
             <span style="font-size:12px;color:var(--text-secondary);">Sensitive</span>
           </div>
-          <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;">Higher = more pages detected as color. Lower = only clearly colored pages. Use per-page override for corrections.</div>
+          <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;">Higher = more pages flagged as color.</div>
         </div>
       </div>
-
       <div class="settings-section">
-        <div class="section-title">Security</div>
-        <p class="section-desc">Set a 4-digit PIN to lock the app on startup. Leave blank to disable PIN lock.</p>
-        <div class="form-group"><label>New PIN (4 digits)</label><input type="password" id="s-pin" maxlength="4" pattern="[0-9]{4}" placeholder="••••" style="width:120px;letter-spacing:6px;font-size:18px;"></div>
+        <div class="section-title">Security — PIN Lock</div>
+        <p class="section-desc">Set a 4-digit PIN to lock the app on startup.</p>
+        <div class="form-group"><label>New PIN (4 digits)</label><input type="password" id="s-pin" maxlength="4" placeholder="••••" style="width:120px;letter-spacing:6px;font-size:18px;"></div>
         <div class="form-group"><label>Confirm PIN</label><input type="password" id="s-pin2" maxlength="4" placeholder="••••" style="width:120px;letter-spacing:6px;font-size:18px;"></div>
-        <button class="btn" onclick="clearPin()">Remove PIN Lock</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" onclick="saveSettings()">Save PIN</button>
+          <button class="btn" onclick="clearPin()">Remove PIN</button>
+        </div>
         <div class="pin-status" id="pin-status"></div>
       </div>
-
       <div class="settings-section">
         <div class="section-title">Appearance</div>
         <div class="form-group toggle-row">
           <label>Dark Mode</label>
           <label class="toggle"><input type="checkbox" id="s-dark" onchange="toggleDark(this.checked)"><span class="toggle-slider"></span></label>
         </div>
+        <div style="margin-top:16px;">
+          <div class="section-title" style="margin-bottom:8px;">About</div>
+          <div style="font-size:13px;color:var(--text-secondary);line-height:1.7;">
+            PrintMaster — PDF print cost analyzer<br>
+            <span id="about-ver"></span><br>
+            Built for print shop businesses.
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
-</main>
+</div><!-- end main-area -->
+</div><!-- end app-shell -->
 
-<!-- ABOUT MODAL -->
-<div class="modal-bg" id="about-modal" style="display:none;" onclick="closeAbout()">
-  <div class="modal" onclick="event.stopPropagation()">
-    <div class="modal-logo">
-      <div class="logo-icon large">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <rect x="4" y="4" width="16" height="4" rx="1"/><rect x="4" y="10" width="16" height="10" rx="1"/>
-          <rect x="7" y="13" width="6" height="1.5" rx="0.75"/><rect x="7" y="16" width="10" height="1.5" rx="0.75"/>
-          <circle cx="18" cy="7" r="1" fill="currentColor" stroke="none"/>
-        </svg>
+<!-- PRINT PREVIEW MODAL -->
+<div class="modal-bg" id="print-preview-modal" style="display:none;">
+  <div class="print-preview-inner">
+    <div class="print-preview-header">
+      <div class="print-preview-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        Print Preview — <span id="pp-filename"></span>
       </div>
-      <h2>PrintMaster</h2>
-      <p>Version 1.5.0</p>
-    </div>
-    <p class="modal-body">A professional PDF print cost analyzer for print shop businesses. Scans your PDFs, detects color pages, calculates pricing, and generates customer quotes.</p>
-    <button class="btn btn-primary" onclick="closeAbout()">Close</button>
-  </div>
-</div>
-
-<!-- PAGE PREVIEW MODAL -->
-<div class="modal-bg" id="preview-modal" style="display:none;" onclick="closePreview()">
-  <div class="preview-modal-inner" onclick="event.stopPropagation()">
-    <div class="preview-modal-header">
-      <span id="preview-label">Page 1</span>
-      <div style="display:flex;gap:8px;">
-        <button class="btn btn-sm" id="prev-pg" onclick="shiftPreview(-1)">← Prev</button>
-        <button class="btn btn-sm" id="next-pg" onclick="shiftPreview(1)">Next →</button>
-        <button class="btn btn-sm" onclick="closePreview()">✕ Close</button>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span id="pp-info" style="font-size:12px;color:var(--text-secondary);"></span>
+        <button class="btn" onclick="closePrintPreview()">✕ Cancel</button>
+        <button class="btn btn-primary" onclick="confirmPrint()" id="pp-print-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          Print Now
+        </button>
       </div>
     </div>
-    <div class="preview-modal-body">
-      <img id="preview-img" src="" alt="Page preview">
-    </div>
+    <div class="print-preview-body" id="pp-pages"></div>
   </div>
 </div>
 
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
-
 <canvas id="offscreen-canvas" style="display:none;"></canvas>
+
 <script type="module">
   const pdfjsLib = await import('../node_modules/pdfjs-dist/build/pdf.mjs');
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../node_modules/pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;

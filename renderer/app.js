@@ -25,22 +25,46 @@ async function init() {
   state.pricing = all.pricing || state.pricing;
   state.currency = all.currency || '₱';
 
+  // Load real version from package.json via IPC
+  const ver = await window.api.getVersion();
+  document.getElementById('app-ver').textContent = 'v' + ver;
+  document.getElementById('about-ver').textContent = 'Version ' + ver;
+
   applyTheme(all.theme || 'light');
   document.getElementById('sb-biz-name').textContent = all.businessName || 'My Print Shop';
   document.getElementById('sb-biz-contact').textContent = all.contact || '';
   populateSettings(all);
   renderHistory();
 
-  // Menu/keyboard triggers from main process
-  window.api.on('open-settings', () => gotoPage('settings'));
-  window.api.on('trigger-open', () => openPdfDialog());
-  window.api.on('new-job', () => resetScan());
-  window.api.on('show-about', () => document.getElementById('about-modal').style.display='flex');
-  window.api.on('export-quote', () => window.print());
-
   document.getElementById('s-show-tax').addEventListener('change', function() {
     document.getElementById('tax-row').style.display = this.checked ? 'flex' : 'none';
   });
+}
+
+// ===== SIDEBAR TAB SWITCHING =====
+window.switchSbTab = function(tab) {
+  document.querySelectorAll('.sb-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.sb-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('sb-' + tab).classList.add('active');
+};
+
+// ===== EXTRAS STATE =====
+const extras = { binding: 0, paperPerPage: 0, lamPerPage: 0, rush: false, custom: 0, customLabel: '' };
+
+window.updateExtras = function() {
+  extras.binding = +document.getElementById('ex-binding').value;
+  extras.paperPerPage = +document.getElementById('ex-paper').value;
+  extras.lamPerPage = +document.getElementById('ex-lam').value;
+  extras.rush = document.getElementById('ex-rush').checked;
+  extras.custom = +document.getElementById('ex-custom').value || 0;
+  extras.customLabel = document.getElementById('ex-custom-label').value || 'Custom';
+  updateLiveQuote();
+};
+
+function extrasTotal(baseTotal, includedCount) {
+  let e = extras.binding + (extras.paperPerPage + extras.lamPerPage) * includedCount + extras.custom;
+  if (extras.rush) e += (baseTotal + e) * 0.2;
+  return e;
 }
 
 // ===== NAVIGATION =====
@@ -110,7 +134,7 @@ window.openPdfDialog = async function() {
 };
 
 // ===== PROCESS PDF =====
-async function processPdf({ buffer, name, size }) {
+async function processPdf({ buffer, name, size, fileId }) {
   // Show progress
   document.getElementById('drop-zone').style.display = 'none';
   document.getElementById('scan-results').style.display = 'none';
@@ -122,7 +146,9 @@ async function processPdf({ buffer, name, size }) {
   setProgress(5, 'Loading PDF...');
 
   try {
-    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    // Normalize for pdfjs — IPC sends plain array, drag-drop sends ArrayBuffer
+    const pdfData = Array.isArray(buffer) ? new Uint8Array(buffer) : new Uint8Array(buffer);
+    const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
     const total = pdf.numPages;
     setProgress(15, `Found ${total} page${total>1?'s':''}. Analyzing...`);
 
@@ -132,29 +158,47 @@ async function processPdf({ buffer, name, size }) {
 
     for (let p = 1; p <= total; p++) {
       const page = await pdf.getPage(p);
+      const rawVp = page.getViewport({ scale: 1 });
+
+      // Store physical dimensions in points for correct print sizing
+      const widthPt = rawVp.width;
+      const heightPt = rawVp.height;
+      const sizeKey = detectSize(widthPt, heightPt);
+
+      // Color detection at 0.8x
       const vp = page.getViewport({ scale: 0.8 });
       canvas.width = vp.width; canvas.height = vp.height;
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const colored = detectColor(imgData);
 
-      const rawVp = page.getViewport({ scale: 1 });
-      const sizeKey = detectSize(rawVp.width, rawVp.height);
-
+      // Thumbnail at 0.35x for table display
       const tVp = page.getViewport({ scale: 0.35 });
       const tc = document.createElement('canvas');
       tc.width = tVp.width; tc.height = tVp.height;
       await page.render({ canvasContext: tc.getContext('2d'), viewport: tVp }).promise;
       const thumb = tc.toDataURL('image/jpeg', 0.85);
 
-      const fVp = page.getViewport({ scale: 1.2 });
+      // Preview image at 1.5x for the in-app viewer modal
+      const fVp = page.getViewport({ scale: 1.5 });
       const fc = document.createElement('canvas');
       fc.width = fVp.width; fc.height = fVp.height;
       await page.render({ canvasContext: fc.getContext('2d'), viewport: fVp }).promise;
       const full = fc.toDataURL('image/jpeg', 0.92);
 
+      // Print image at 3x — 216 DPI equivalent, sharp for physical printing
+      const pVp = page.getViewport({ scale: 3 });
+      const pc = document.createElement('canvas');
+      pc.width = pVp.width; pc.height = pVp.height;
+      await page.render({ canvasContext: pc.getContext('2d'), viewport: pVp }).promise;
+      const printImg = pc.toDataURL('image/png'); // PNG for lossless print quality
+
       const cost = getPageCost(colored, sizeKey);
-      pages.push({ num: p, colored, colorOverride: null, included: true, sizeKey, cost, thumb, full });
+      pages.push({
+        num: p, colored, colorOverride: null, included: true,
+        sizeKey, cost, thumb, full, printImg,
+        widthPt, heightPt   // physical size in PDF points
+      });
 
       const pct = 15 + Math.round((p / total) * 82);
       setProgress(pct, `Page ${p} of ${total} — ${colored ? '🎨 Color' : '⬛ B&W'}`);
@@ -162,16 +206,22 @@ async function processPdf({ buffer, name, size }) {
 
     setProgress(100, 'Done!');
 
-    // Normalize buffer — IPC may return a plain object, drag-drop gives real ArrayBuffer
+    // Normalize buffer for pdfjs — IPC sends plain array, drag-drop sends ArrayBuffer
+    // pdfBuffer stored for drag-drop fallback printing only
     let pdfBuffer = buffer;
-    if (!(buffer instanceof ArrayBuffer)) {
-      // Convert plain object / Buffer-like back to ArrayBuffer
-      pdfBuffer = new Uint8Array(Object.values(buffer)).buffer;
+    if (Array.isArray(buffer)) {
+      pdfBuffer = new Uint8Array(buffer).buffer;
     }
 
-    // Add to pdfs list
     const pdfId = Date.now() + Math.random();
-    state.pdfs.push({ id: pdfId, fileName: name, fileSize: size, pdfBuffer, pages });
+    state.pdfs.push({
+      id: pdfId,
+      fileName: name,
+      fileSize: size,
+      fileId: fileId || null,    // original file path reference (from dialog)
+      pdfBuffer,                  // raw bytes (from drag-drop)
+      pages
+    });
     state.activePdfId = pdfId;
 
     setTimeout(() => renderResults(), 300);
@@ -254,6 +304,7 @@ function renderResults() {
   renderMetrics();
   renderTable();
   updateTotalBar();
+  updateLiveQuote();
 }
 
 function renderPdfTabs() {
@@ -309,21 +360,21 @@ function renderTable() {
     const isOverridden = p.colorOverride !== null;
     const excluded = !p.included;
     return `
-    <tr class="${excluded ? 'row-excluded' : ''}">
+    <tr class="${excluded ? 'row-excluded' : ''}" onclick="openMasterPreview(${i})" style="cursor:pointer;">
       <td style="color:var(--text-secondary);font-size:12px;">${p.num}</td>
-      <td>
-        <div class="thumb-cell" onclick="openPreview(${i})" title="Click to preview">
+      <td onclick="event.stopPropagation()">
+        <div class="thumb-cell" onclick="openPreview(${i})" title="Click to preview full screen">
           <img src="${p.thumb}" alt="p${p.num}" style="${excluded ? 'opacity:0.35' : ''}">
           <div class="thumb-overlay">🔍</div>
         </div>
       </td>
-      <td>
+      <td onclick="event.stopPropagation()">
         <label class="include-toggle" title="${excluded ? 'Excluded from print' : 'Included in print'}">
           <input type="checkbox" ${p.included ? 'checked' : ''} onchange="toggleInclude(${i}, this.checked)">
           <span class="include-slider"></span>
         </label>
       </td>
-      <td>
+      <td onclick="event.stopPropagation()">
         <div style="display:flex;align-items:center;gap:6px;${excluded ? 'opacity:0.4' : ''}">
           <span class="badge ${isColor ? 'badge-color' : 'badge-bw'}">
             <span class="dot-c" style="background:${isColor ? '#c0392b' : '#888'}"></span>
@@ -338,7 +389,7 @@ function renderTable() {
         </div>
       </td>
       <td style="${excluded ? 'opacity:0.4' : ''}"><span class="badge badge-size">${sizeName(p.sizeKey)}</span></td>
-      <td style="${excluded ? 'opacity:0.4' : ''}">
+      <td onclick="event.stopPropagation()" style="${excluded ? 'opacity:0.4' : ''}">
         <select class="size-sel" onchange="overrideSize(${i}, this.value)" ${excluded ? 'disabled' : ''}>
           <option value="letter" ${p.sizeKey==='letter'?'selected':''}>Letter</option>
           <option value="a4" ${p.sizeKey==='a4'?'selected':''}>A4</option>
@@ -374,9 +425,7 @@ function updateTotalBar() {
 window.toggleInclude = function(idx, val) {
   const pdf = activePdf(); if (!pdf) return;
   pdf.pages[idx].included = val;
-  renderTable();
-  renderMetrics();
-  updateTotalBar();
+  renderTable(); renderMetrics(); updateTotalBar(); updateLiveQuote();
 };
 
 window.overrideSize = function(idx, newSize) {
@@ -384,8 +433,7 @@ window.overrideSize = function(idx, newSize) {
   pdf.pages[idx].sizeKey = newSize;
   const isColor = effectiveColor(pdf.pages[idx]);
   pdf.pages[idx].cost = getPageCost(isColor, newSize);
-  renderTable();
-  updateTotalBar();
+  renderTable(); updateTotalBar(); updateLiveQuote();
 };
 
 window.setColorOverride = function(idx, val) {
@@ -393,27 +441,84 @@ window.setColorOverride = function(idx, val) {
   pdf.pages[idx].colorOverride = val;
   const isColor = effectiveColor(pdf.pages[idx]);
   pdf.pages[idx].cost = getPageCost(isColor, pdf.pages[idx].sizeKey);
-  renderTable();
-  updateTotalBar();
+  renderTable(); updateTotalBar(); updateLiveQuote();
 };
 
-// ===== PRINT PDF =====
+// ===== PRINT PREVIEW =====
+let pendingPrintData = null;
+
 window.printPdf = async function() {
   const pdf = activePdf();
   if (!pdf) { toast('No PDF loaded.'); return; }
-  toast('Opening PDF for printing...');
-  // Send as Uint8Array — ArrayBuffer doesn't serialize correctly over Electron IPC
-  const u8 = new Uint8Array(pdf.pdfBuffer);
-  const result = await window.api.printPdf(u8, pdf.fileName);
-  if (result && !result.ok) {
+
+  const includedPages = pdf.pages.filter(p => p.included);
+  if (!includedPages.length) { toast('No pages selected for printing.'); return; }
+
+  // Show built-in print preview
+  pendingPrintData = {
+    fileName: pdf.fileName,
+    pages: includedPages.map(p => ({
+      dataUrl: p.printImg,
+      widthPt: p.widthPt,
+      heightPt: p.heightPt,
+      num: p.num,
+      colored: effectiveColor(p)
+    }))
+  };
+
+  document.getElementById('pp-filename').textContent = pdf.fileName;
+  document.getElementById('pp-info').textContent =
+    `${includedPages.length} page${includedPages.length!==1?'s':''} · ${state.copies} cop${state.copies===1?'y':'ies'}`;
+
+  // Render preview pages
+  const container = document.getElementById('pp-pages');
+  container.innerHTML = pendingPrintData.pages.map(pg => `
+    <div class="pp-page-wrap">
+      <div class="pp-page-num">Page ${pg.num} · ${sizeName(detectSizeFromPt(pg.widthPt, pg.heightPt))} · ${pg.colored ? '🎨 Color' : '⬛ B&W'}</div>
+      <div class="pp-page-img">
+        <img src="${pg.dataUrl}" alt="Page ${pg.num}">
+      </div>
+    </div>`).join('');
+
+  document.getElementById('print-preview-modal').style.display = 'flex';
+};
+
+window.closePrintPreview = function() {
+  document.getElementById('print-preview-modal').style.display = 'none';
+  pendingPrintData = null;
+};
+
+window.confirmPrint = async function() {
+  if (!pendingPrintData) return;
+  const btn = document.getElementById('pp-print-btn');
+  btn.textContent = 'Printing...';
+  btn.disabled = true;
+
+  const result = await window.api.printPdf(pendingPrintData);
+
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Print Now`;
+  btn.disabled = false;
+
+  if (result?.ok) {
+    closePrintPreview();
+    toast('Print job sent!');
+  } else if (result?.error && result.error !== 'Cancelled') {
     toast('Print error: ' + result.error);
+  } else {
+    closePrintPreview();
   }
 };
 
+function detectSizeFromPt(wPt, hPt) {
+  return detectSize(wPt, hPt);
+}
+
+// ===== PRINT PDF (legacy alias) =====
+
+
 window.recalcCopies = function() {
   state.copies = Math.max(1, parseInt(document.getElementById('copies-input').value) || 1);
-  renderMetrics();
-  updateTotalBar();
+  renderMetrics(); updateTotalBar(); updateLiveQuote();
 };
 
 window.resetScan = function() {
@@ -428,7 +533,96 @@ window.resetScan = function() {
   document.getElementById('open-btn').style.display = 'inline-flex';
 };
 
-// ===== QUOTE =====
+// ===== LIVE QUOTE (right sidebar) =====
+function updateLiveQuote() {
+  const pdf = activePdf();
+  const hasData = pdf && pdf.pages.length > 0;
+  document.getElementById('sq-empty').style.display = hasData ? 'none' : 'flex';
+  document.getElementById('sq-content').style.display = hasData ? 'flex' : 'none';
+  if (!hasData) return;
+
+  const cur = state.currency;
+  const copies = state.copies;
+  const included = allPages().filter(p => p.included);
+  const base = included.reduce((s,p) => s + getPageCost(effectiveColor(p), p.sizeKey), 0) * copies;
+  const extTotal = extrasTotal(base, included.length * copies);
+  const grand = base + extTotal;
+
+  // Group lines
+  const groups = {};
+  included.forEach(p => {
+    const isColor = effectiveColor(p);
+    const k = `${isColor?'color':'bw'}|${p.sizeKey}`;
+    if (!groups[k]) groups[k] = { colored: isColor, sizeKey: p.sizeKey, count: 0, unit: getPageCost(isColor, p.sizeKey) };
+    groups[k].count++;
+  });
+
+  let linesHtml = Object.values(groups).map(g => `
+    <div class="sq-line">
+      <span>${g.colored?'🎨 Color':'⬛ B&W'} ${sizeName(g.sizeKey)} × ${g.count * copies}</span>
+      <span class="sq-line-amount">${cur}${(g.unit * g.count * copies).toFixed(2)}</span>
+    </div>`).join('');
+
+  if (extras.binding > 0) linesHtml += `<div class="sq-line"><span>${document.getElementById('ex-binding').options[document.getElementById('ex-binding').selectedIndex].text.replace(/\s*\(.*\)/,'')}</span><span class="sq-line-amount">${cur}${extras.binding.toFixed(2)}</span></div>`;
+  if (extras.paperPerPage > 0) linesHtml += `<div class="sq-line"><span>Paper upgrade × ${included.length*copies}</span><span class="sq-line-amount">${cur}${(extras.paperPerPage*included.length*copies).toFixed(2)}</span></div>`;
+  if (extras.lamPerPage > 0) linesHtml += `<div class="sq-line"><span>Lamination × ${included.length*copies}</span><span class="sq-line-amount">${cur}${(extras.lamPerPage*included.length*copies).toFixed(2)}</span></div>`;
+  if (extras.rush) linesHtml += `<div class="sq-line"><span>Express Fee (20%)</span><span class="sq-line-amount">${cur}${(grand - base - (extTotal - (grand-base)*0.2/(1+0.2))).toFixed(2)}</span></div>`;
+  if (extras.custom > 0) linesHtml += `<div class="sq-line"><span>${extras.customLabel||'Custom'}</span><span class="sq-line-amount">${cur}${extras.custom.toFixed(2)}</span></div>`;
+
+  document.getElementById('sq-lines').innerHTML = linesHtml || `<div style="font-size:12px;color:var(--text-secondary);padding:8px 0;">No pages included</div>`;
+
+  const showTax = state.settings.showTax;
+  const taxRate = parseFloat(state.settings.taxRate) || 0;
+  const tax = showTax ? grand * (taxRate/100) : 0;
+
+  let totalsHtml = `<div class="sq-total-row"><span>Subtotal</span><span>${cur}${base.toFixed(2)}</span></div>`;
+  if (extTotal > 0) totalsHtml += `<div class="sq-total-row"><span>Extras</span><span>${cur}${extTotal.toFixed(2)}</span></div>`;
+  if (showTax) totalsHtml += `<div class="sq-total-row"><span>Tax (${taxRate}%)</span><span>${cur}${tax.toFixed(2)}</span></div>`;
+  totalsHtml += `<div class="sq-total-row grand"><span>TOTAL</span><span>${cur}${(grand+tax).toFixed(2)}</span></div>`;
+  document.getElementById('sq-totals').innerHTML = totalsHtml;
+
+  // Update extras total box
+  const etb = document.getElementById('extras-total-box');
+  if (extTotal > 0) {
+    etb.style.display = 'block';
+    document.getElementById('extras-total-val').textContent = cur + extTotal.toFixed(2);
+  } else { etb.style.display = 'none'; }
+}
+
+// ===== MASTER PREVIEW (right sidebar) =====
+let spIdx = 0;
+
+window.openMasterPreview = function(idx) {
+  spIdx = idx;
+  showMasterPreview();
+  switchSbTab('preview');
+};
+
+function showMasterPreview() {
+  const pages = activePdf()?.pages || [];
+  const p = pages[spIdx];
+  if (!p) return;
+  document.getElementById('sp-empty').style.display = 'none';
+  document.getElementById('sp-content').style.display = 'flex';
+  document.getElementById('sp-img').src = p.full || p.thumb;
+  const isColor = effectiveColor(p);
+  document.getElementById('sp-header').innerHTML =
+    `Page ${p.num} · ${sizeName(p.sizeKey)} · <span class="badge ${isColor?'badge-color':'badge-bw'}" style="font-size:10px;">${isColor?'🎨 Color':'⬛ B&W'}</span>`;
+  document.getElementById('sp-counter').textContent = `${spIdx+1} / ${pages.length}`;
+  document.getElementById('sp-prev').disabled = spIdx === 0;
+  document.getElementById('sp-next').disabled = spIdx === pages.length - 1;
+}
+
+window.spShift = function(dir) {
+  const pages = activePdf()?.pages || [];
+  spIdx = Math.max(0, Math.min(pages.length-1, spIdx+dir));
+  showMasterPreview();
+};
+
+// ===== PRINT QUOTE RECEIPT =====
+window.printQuoteReceipt = function() { window.print(); };
+
+// ===== EXISTING QUOTE BUILD (kept for history/save) =====
 function buildQuote() {
   const included = allPages().filter(p => p.included);
   const hasData = included.length > 0;
