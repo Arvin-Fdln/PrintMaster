@@ -4,7 +4,29 @@ const fs = require('fs');
 const Store = require('electron-store');
 
 const store = new Store({ encryptionKey: 'printmaster-secure-2024', name: 'config' });
-let mainWindow, loginWindow;
+let mainWindow, loginWindow, splashWindow;
+
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 420, height: 380,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    center: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true }
+  });
+  splashWindow.loadFile('renderer/splash.html');
+  splashWindow.once('ready-to-show', () => splashWindow.show());
+}
+
+function closeSplash() {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.close();
+    splashWindow = null;
+  }
+}
 const openedFilePaths = new Map();
 
 function createLoginWindow() {
@@ -23,7 +45,11 @@ function createMainWindow() {
     icon: path.join(__dirname, 'assets', 'icon.png'), backgroundColor: '#f8f7f4', show: false
   });
   mainWindow.loadFile('renderer/index.html');
-  mainWindow.once('ready-to-show', () => { mainWindow.show(); if (loginWindow) loginWindow.close(); });
+  mainWindow.once('ready-to-show', () => {
+    closeSplash();
+    mainWindow.show();
+    if (loginWindow) loginWindow.close();
+  });
   Menu.setApplicationMenu(null);
 }
 
@@ -31,6 +57,20 @@ ipcMain.handle('get-store', (_, key) => store.get(key));
 ipcMain.handle('set-store', (_, key, value) => { store.set(key, value); return true; });
 ipcMain.handle('get-all-store', () => store.store);
 ipcMain.handle('get-version', () => app.getVersion());
+
+ipcMain.handle('get-printers', async () => {
+  try {
+    // webContents.getPrintersAsync() returns installed system printers
+    const printers = await mainWindow.webContents.getPrintersAsync();
+    return printers.map(p => ({
+      name: p.name,
+      isDefault: p.isDefault,
+      status: p.status
+    }));
+  } catch (err) {
+    return [];
+  }
+});
 
 ipcMain.handle('open-pdf-dialog', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -49,21 +89,63 @@ ipcMain.handle('open-pdf-dialog', async () => {
 
 ipcMain.handle('print-pdf', async (_, printData) => {
   try {
-    const pageDivs = printData.pages.map(pg => {
+    const { pages, printerName, duplex, scale, landscape } = printData;
+
+    const pageDivs = pages.map(pg => {
       const wIn = (pg.widthPt / 72).toFixed(4);
       const hIn = (pg.heightPt / 72).toFixed(4);
-      return `<div class="page" style="width:${wIn}in;height:${hIn}in;"><img src="${pg.dataUrl}" style="width:100%;height:100%;display:block;"></div>`;
+      const rot = pg.rotation || 0;
+      const imgStyle = rot ? `width:100%;height:100%;display:block;transform:rotate(${rot}deg);transform-origin:center;` : `width:100%;height:100%;display:block;`;
+      return `<div class="page" style="width:${wIn}in;height:${hIn}in;"><img src="${pg.dataUrl}" style="${imgStyle}"></div>`;
     }).join('\n');
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:white;}.page{display:block;overflow:hidden;page-break-after:always;page-break-inside:avoid;}.page:last-child{page-break-after:auto;}.page img{display:block;width:100%;height:100%;object-fit:fill;}@page{margin:0;}@media print{body{margin:0;}}</style></head><body>${pageDivs}</body></html>`;
-    const printWin = new BrowserWindow({ width: 900, height: 1100, show: false, webPreferences: { nodeIntegration: false, contextIsolation: true } });
+
+    const scaleVal = scale || 100;
+    const scaleCSS = scaleVal !== 100 ? `transform:scale(${scaleVal/100});transform-origin:top left;` : '';
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+      *{margin:0;padding:0;box-sizing:border-box;}body{background:white;}
+      .page{display:block;overflow:hidden;page-break-after:always;page-break-inside:avoid;${scaleCSS}}
+      .page:last-child{page-break-after:auto;}
+      .page img{display:block;width:100%;height:100%;object-fit:fill;}
+      @page{margin:0;}@media print{body{margin:0;}}
+    </style></head><body>${pageDivs}</body></html>`;
+
+    const printWin = new BrowserWindow({
+      width: 900, height: 1100, show: false,
+      webPreferences: { nodeIntegration: false, contextIsolation: true }
+    });
     await printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
     await new Promise(r => setTimeout(r, 600));
-    const firstPage = printData.pages[0];
+
+    const firstPage = pages[0];
     const wMicrons = Math.round((firstPage.widthPt / 72) * 25400);
     const hMicrons = Math.round((firstPage.heightPt / 72) * 25400);
+
+    // Build print options
+    const printOptions = {
+      silent: false,
+      printBackground: true,
+      color: true,
+      pageSize: { width: wMicrons, height: hMicrons },
+      margins: { marginType: 'none' },
+      landscape: !!landscape
+    };
+
+    // Attach printer name if selected
+    if (printerName && printerName !== '__default__') {
+      printOptions.deviceName = printerName;
+    }
+
+    // Duplex settings
+    if (duplex === 'long') printOptions.duplexMode = 'longEdge';
+    else if (duplex === 'short') printOptions.duplexMode = 'shortEdge';
+    else printOptions.duplexMode = 'simplex';
+
     return new Promise((resolve) => {
-      printWin.webContents.print({ silent: false, printBackground: true, color: true, pageSize: { width: wMicrons, height: hMicrons }, margins: { marginType: 'none' } },
-        (success, reason) => { printWin.close(); resolve(success ? { ok: true } : { ok: false, error: reason || 'Cancelled' }); });
+      printWin.webContents.print(printOptions, (success, reason) => {
+        printWin.close();
+        resolve(success ? { ok: true } : { ok: false, error: reason || 'Cancelled' });
+      });
     });
   } catch (err) { return { ok: false, error: err.message }; }
 });
@@ -80,6 +162,14 @@ ipcMain.handle('save-job', (_, job) => {
 ipcMain.handle('delete-job', (_, id) => { store.set('jobHistory', store.get('jobHistory',[]).filter(j=>j.id!==id)); return true; });
 ipcMain.handle('get-theme', () => nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
 
-app.whenReady().then(() => { if (!!store.get('pinHash','')) createLoginWindow(); else createMainWindow(); });
+app.whenReady().then(() => {
+  createSplashWindow();
+  // Show splash for 2.5 seconds then open the real app
+  setTimeout(() => {
+    closeSplash();
+    if (!!store.get('pinHash','')) createLoginWindow();
+    else createMainWindow();
+  }, 2500);
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createMainWindow(); });

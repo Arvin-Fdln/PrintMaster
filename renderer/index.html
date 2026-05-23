@@ -287,22 +287,123 @@
 
 <!-- PRINT PREVIEW MODAL -->
 <div class="modal-bg" id="print-preview-modal" style="display:none;">
-  <div class="print-preview-inner">
-    <div class="print-preview-header">
-      <div class="print-preview-title">
+  <div class="pp-shell">
+
+    <!-- LEFT: settings panel -->
+    <div class="pp-settings">
+      <div class="pp-settings-title">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-        Print Preview — <span id="pp-filename"></span>
+        Print Settings
       </div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <span id="pp-info" style="font-size:12px;color:var(--text-secondary);"></span>
-        <button class="btn" onclick="closePrintPreview()">✕ Cancel</button>
-        <button class="btn btn-primary" onclick="confirmPrint()" id="pp-print-btn">
+
+      <div class="pp-field">
+        <label class="pp-label">Printer</label>
+        <select class="pp-select" id="pp-printer">
+          <option value="__default__">Loading printers...</option>
+        </select>
+      </div>
+
+      <div class="pp-field">
+        <label class="pp-label">Print on Both Sides</label>
+        <select class="pp-select" id="pp-duplex">
+          <option value="none">One sided</option>
+          <option value="long">Both sides — Flip on long edge</option>
+          <option value="short">Both sides — Flip on short edge</option>
+        </select>
+      </div>
+
+      <div class="pp-field">
+        <label class="pp-label">Scale</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="range" id="pp-scale-range" min="50" max="150" value="100" style="flex:1;" oninput="ppScaleChange(this.value)">
+          <div style="display:flex;align-items:center;gap:4px;">
+            <input type="number" id="pp-scale-num" value="100" min="50" max="150" style="width:52px;padding:4px 6px;border:1px solid var(--border-input);border-radius:6px;background:var(--bg-input);color:var(--text-primary);font-size:12px;text-align:center;" oninput="ppScaleNumChange(this.value)">
+            <span style="font-size:12px;color:var(--text-secondary);">%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pp-field">
+        <label class="pp-label">Orientation</label>
+        <div style="display:flex;gap:8px;">
+          <button class="pp-orient-btn active" id="pp-orient-port" onclick="ppSetOrientation('portrait')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="4" y="2" width="16" height="20" rx="2"/></svg>
+            Portrait
+          </button>
+          <button class="pp-orient-btn" id="pp-orient-land" onclick="ppSetOrientation('landscape')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="2" y="4" width="20" height="16" rx="2"/></svg>
+            Landscape
+          </button>
+        </div>
+      </div>
+
+      <div class="pp-field">
+        <label class="pp-label">Pages</label>
+        <div class="pp-info-row"><span id="pp-page-count-info">— pages</span></div>
+      </div>
+
+      <div class="pp-field">
+        <label class="pp-label">File</label>
+        <div class="pp-info-row pp-filename-info" id="pp-filename"></div>
+      </div>
+
+      <div style="flex:1;"></div>
+
+      <div class="pp-actions">
+        <button class="btn" onclick="closePrintPreview()" style="width:100%;justify-content:center;">Cancel</button>
+        <button class="btn btn-primary" onclick="confirmPrint()" id="pp-print-btn" style="width:100%;justify-content:center;margin-top:8px;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
           Print Now
         </button>
       </div>
     </div>
-    <div class="print-preview-body" id="pp-pages"></div>
+
+    <!-- RIGHT: preview area -->
+    <div class="pp-preview-area">
+
+      <!-- Toolbar -->
+      <div class="pp-toolbar">
+        <div class="pp-toolbar-left">
+          <button class="pp-tool-btn" onclick="ppPrevPage()" id="pp-prev-btn" title="Previous page">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="15" height="15"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <span class="pp-page-counter" id="pp-page-counter">1 / 1</span>
+          <button class="pp-tool-btn" onclick="ppNextPage()" id="pp-next-btn" title="Next page">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="15" height="15"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+        <div class="pp-toolbar-center">
+          <button class="pp-tool-btn" onclick="ppZoom(-0.15)" title="Zoom out">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          </button>
+          <span class="pp-zoom-label" id="pp-zoom-label">100%</span>
+          <button class="pp-tool-btn" onclick="ppZoom(0.15)" title="Zoom in">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          </button>
+          <button class="pp-tool-btn" onclick="ppResetZoom()" title="Reset zoom" style="font-size:11px;padding:5px 8px;">Fit</button>
+        </div>
+        <div class="pp-toolbar-right">
+          <button class="pp-tool-btn" onclick="ppRotate(-90)" title="Rotate left">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+          </button>
+          <button class="pp-tool-btn" onclick="ppRotate(90)" title="Rotate right">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Page viewport -->
+      <div class="pp-viewport" id="pp-viewport">
+        <div class="pp-page-container" id="pp-page-container">
+          <img id="pp-current-img" src="" alt="Page preview">
+          <div class="pp-page-shadow"></div>
+        </div>
+      </div>
+
+      <!-- Page info strip -->
+      <div class="pp-info-strip" id="pp-info-strip"></div>
+
+    </div>
   </div>
 </div>
 

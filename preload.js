@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('api', {
   setStore: (key, value) => ipcRenderer.invoke('set-store', key, value),
   getAllStore: () => ipcRenderer.invoke('get-all-store'),
   getVersion: () => ipcRenderer.invoke('get-version'),
+  getPrinters: () => ipcRenderer.invoke('get-printers'),
   openPdfDialog: () => ipcRenderer.invoke('open-pdf-dialog'),
   printPdf: (printData) => ipcRenderer.invoke('print-pdf', printData),
   verifyPin: (hash) => ipcRenderer.invoke('verify-pin', hash),

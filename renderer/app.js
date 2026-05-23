@@ -281,30 +281,162 @@ window.resetScan = function() {
   document.getElementById('open-btn').style.display = 'inline-flex';
 };
 
-// ===== PRINT PDF =====
+// ===== PRINT PREVIEW =====
 let pendingPrintData = null;
+let ppState = {
+  pages: [],
+  currentIdx: 0,
+  zoom: 1.0,
+  rotations: [],      // per-page rotation in degrees
+  scale: 100,         // print scale %
+  orientation: 'portrait'
+};
+
 window.printPdf = async function() {
   const pdf = activePdf(); if (!pdf) { toast('No PDF loaded.'); return; }
   const includedPages = pdf.pages.filter(p => p.included);
   if (!includedPages.length) { toast('No pages selected for printing.'); return; }
-  pendingPrintData = { fileName: pdf.fileName, pages: includedPages.map(p => ({ dataUrl: p.printImg, widthPt: p.widthPt, heightPt: p.heightPt, num: p.num, colored: effectiveColor(p) })) };
+
+  ppState.pages = includedPages;
+  ppState.currentIdx = 0;
+  ppState.zoom = 1.0;
+  ppState.rotations = includedPages.map(() => 0);
+  ppState.scale = 100;
+  ppState.orientation = 'portrait';
+
+  // Set filename and page count
   document.getElementById('pp-filename').textContent = pdf.fileName;
-  document.getElementById('pp-info').textContent = `${includedPages.length} page${includedPages.length!==1?'s':''} · ${state.copies} cop${state.copies===1?'y':'ies'}`;
-  document.getElementById('pp-pages').innerHTML = pendingPrintData.pages.map(pg => `
-    <div class="pp-page-wrap">
-      <div class="pp-page-num">Page ${pg.num} · ${sizeName(detectSize(pg.widthPt, pg.heightPt))} · ${pg.colored?'🎨 Color':'⬛ B&W'}</div>
-      <div class="pp-page-img"><img src="${pg.dataUrl}" alt="Page ${pg.num}"></div>
-    </div>`).join('');
+  document.getElementById('pp-page-count-info').textContent = `${includedPages.length} page${includedPages.length!==1?'s':''}`;
+
+  // Reset scale UI
+  document.getElementById('pp-scale-range').value = 100;
+  document.getElementById('pp-scale-num').value = 100;
+
+  // Reset orientation
+  document.getElementById('pp-orient-port').classList.add('active');
+  document.getElementById('pp-orient-land').classList.remove('active');
+
+  // Load printers
+  const printers = await window.api.getPrinters();
+  const sel = document.getElementById('pp-printer');
+  sel.innerHTML = printers.length
+    ? printers.map(p => `<option value="${p.name}" ${p.isDefault?'selected':''}>${p.name}${p.isDefault?' (Default)':''}</option>`).join('')
+    : '<option value="__default__">Default Printer</option>';
+
+  ppRenderCurrentPage();
   document.getElementById('print-preview-modal').style.display = 'flex';
 };
-window.closePrintPreview = function() { document.getElementById('print-preview-modal').style.display = 'none'; pendingPrintData = null; };
+
+function ppRenderCurrentPage() {
+  const pages = ppState.pages;
+  if (!pages.length) return;
+  const idx = ppState.currentIdx;
+  const pg = pages[idx];
+  const rot = ppState.rotations[idx];
+
+  // Update image
+  const img = document.getElementById('pp-current-img');
+  img.src = pg.full || pg.thumb;
+  img.style.transform = rot ? `rotate(${rot}deg)` : '';
+
+  // Apply zoom to container
+  const container = document.getElementById('pp-page-container');
+  container.style.transform = `scale(${ppState.zoom})`;
+  container.style.transformOrigin = 'center top';
+
+  // Page counter
+  document.getElementById('pp-page-counter').textContent = `${idx+1} / ${pages.length}`;
+  document.getElementById('pp-prev-btn').disabled = idx === 0;
+  document.getElementById('pp-next-btn').disabled = idx === pages.length - 1;
+
+  // Zoom label
+  document.getElementById('pp-zoom-label').textContent = Math.round(ppState.zoom * 100) + '%';
+
+  // Info strip
+  const isColor = effectiveColor(pg);
+  document.getElementById('pp-info-strip').innerHTML =
+    `Page ${pg.num} &nbsp;·&nbsp; ${sizeName(pg.sizeKey)} &nbsp;·&nbsp;
+     <span class="badge ${isColor?'badge-color':'badge-bw'}" style="font-size:10px;">${isColor?'🎨 Color':'⬛ B&W'}</span>
+     ${rot ? `&nbsp;·&nbsp; Rotated ${rot}°` : ''}`;
+}
+
+window.ppPrevPage = function() {
+  if (ppState.currentIdx > 0) { ppState.currentIdx--; ppRenderCurrentPage(); }
+};
+window.ppNextPage = function() {
+  if (ppState.currentIdx < ppState.pages.length - 1) { ppState.currentIdx++; ppRenderCurrentPage(); }
+};
+
+window.ppZoom = function(delta) {
+  ppState.zoom = Math.min(3.0, Math.max(0.3, ppState.zoom + delta));
+  ppRenderCurrentPage();
+};
+window.ppResetZoom = function() { ppState.zoom = 1.0; ppRenderCurrentPage(); };
+
+window.ppRotate = function(deg) {
+  const idx = ppState.currentIdx;
+  ppState.rotations[idx] = ((ppState.rotations[idx] || 0) + deg + 360) % 360;
+  ppRenderCurrentPage();
+};
+
+window.ppScaleChange = function(val) {
+  ppState.scale = parseInt(val);
+  document.getElementById('pp-scale-num').value = val;
+};
+window.ppScaleNumChange = function(val) {
+  const v = Math.min(150, Math.max(50, parseInt(val) || 100));
+  ppState.scale = v;
+  document.getElementById('pp-scale-range').value = v;
+};
+
+window.ppSetOrientation = function(ori) {
+  ppState.orientation = ori;
+  document.getElementById('pp-orient-port').classList.toggle('active', ori === 'portrait');
+  document.getElementById('pp-orient-land').classList.toggle('active', ori === 'landscape');
+};
+
+// Mouse wheel zoom in preview viewport
+document.addEventListener('DOMContentLoaded', () => {
+  const vp = document.getElementById('pp-viewport');
+  if (vp) {
+    vp.addEventListener('wheel', e => {
+      if (document.getElementById('print-preview-modal').style.display === 'flex') {
+        e.preventDefault();
+        ppZoom(e.deltaY < 0 ? 0.1 : -0.1);
+      }
+    }, { passive: false });
+  }
+});
+
+window.closePrintPreview = function() {
+  document.getElementById('print-preview-modal').style.display = 'none';
+  pendingPrintData = null;
+};
+
 window.confirmPrint = async function() {
-  if (!pendingPrintData) return;
   const btn = document.getElementById('pp-print-btn');
   btn.textContent = 'Printing...'; btn.disabled = true;
-  const result = await window.api.printPdf(pendingPrintData);
+
+  const printData = {
+    pages: ppState.pages.map((pg, i) => ({
+      dataUrl: pg.printImg,
+      widthPt: pg.widthPt,
+      heightPt: pg.heightPt,
+      num: pg.num,
+      colored: effectiveColor(pg),
+      rotation: ppState.rotations[i]
+    })),
+    printerName: document.getElementById('pp-printer').value,
+    duplex: document.getElementById('pp-duplex').value,
+    scale: ppState.scale,
+    landscape: ppState.orientation === 'landscape'
+  };
+
+  const result = await window.api.printPdf(printData);
+
   btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Print Now`;
   btn.disabled = false;
+
   if (result?.ok) { closePrintPreview(); toast('Print job sent!'); }
   else if (result?.error && result.error !== 'Cancelled') { toast('Print error: ' + result.error); }
   else { closePrintPreview(); }
@@ -437,7 +569,14 @@ document.addEventListener('keydown', e => {
     if (e.key==='ArrowRight') shiftPreview(1);
     if (e.key==='Escape') closePreview();
   }
-  if (document.getElementById('print-preview-modal').style.display==='flex' && e.key==='Escape') closePrintPreview();
+  if (document.getElementById('print-preview-modal').style.display==='flex') {
+    if (e.key==='Escape') closePrintPreview();
+    if (e.key==='ArrowLeft') ppPrevPage();
+    if (e.key==='ArrowRight') ppNextPage();
+    if (e.key==='+' || e.key==='=') ppZoom(0.15);
+    if (e.key==='-') ppZoom(-0.15);
+    if (e.key==='0') ppResetZoom();
+  }
 });
 
 // ===== ABOUT =====
