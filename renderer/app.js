@@ -14,6 +14,71 @@ let state = {
 function activePdf() { return state.pdfs.find(p => p.id === state.activePdfId) || state.pdfs[0] || null; }
 function allPages() { return state.pdfs.flatMap(pdf => pdf.pages); }
 
+// ===== SIDEBAR COLLAPSE =====
+let sidebarCollapsed = false;
+window.toggleSidebar = function() {
+  sidebarCollapsed = !sidebarCollapsed;
+  document.getElementById('sidebar').classList.toggle('collapsed', sidebarCollapsed);
+};
+
+// ===== PRINTER DROPDOWN =====
+let printerDropdownOpen = false;
+let cachedPrinters = [];
+
+window.togglePrinterDropdown = function() {
+  printerDropdownOpen = !printerDropdownOpen;
+  const dd = document.getElementById('printer-dropdown');
+  const chevron = document.getElementById('biz-chevron');
+  dd.classList.toggle('open', printerDropdownOpen);
+  chevron.style.transform = printerDropdownOpen ? 'rotate(180deg)' : '';
+  if (printerDropdownOpen) renderPrinterList();
+};
+
+function renderPrinterList() {
+  const list = document.getElementById('printer-list');
+  if (!cachedPrinters.length) {
+    list.innerHTML = '<div class="no-printers">No printers found</div>';
+    return;
+  }
+  list.innerHTML = cachedPrinters.map(p => `
+    <div class="printer-item">
+      <div class="status-dot ${p.status === 0 ? '' : 'offline'}"></div>
+      <div class="printer-name">${p.name}</div>
+      ${p.isDefault ? '<div class="printer-default">Default</div>' : ''}
+    </div>`).join('');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', e => {
+  const bottom = document.querySelector('.sidebar-bottom');
+  if (bottom && !bottom.contains(e.target) && printerDropdownOpen) {
+    printerDropdownOpen = false;
+    document.getElementById('printer-dropdown').classList.remove('open');
+    document.getElementById('biz-chevron').style.transform = '';
+  }
+});
+
+// ===== PRINTER STATUS =====
+async function checkPrinterStatus() {
+  try {
+    const printers = await window.api.getPrinters();
+    cachedPrinters = printers || [];
+    const dot = document.getElementById('printer-status-dot');
+    const txt = document.getElementById('printer-status-text');
+    if (printers && printers.length > 0) {
+      dot.className = 'status-dot';
+      txt.textContent = `${printers.length} printer${printers.length>1?'s':''} connected`;
+    } else {
+      dot.className = 'status-dot offline';
+      txt.textContent = 'No printers found';
+    }
+  } catch(e) {
+    cachedPrinters = [];
+    document.getElementById('printer-status-dot').className = 'status-dot offline';
+    document.getElementById('printer-status-text').textContent = 'Offline';
+  }
+}
+
 // ===== INIT =====
 async function init() {
   const all = await window.api.getAllStore();
@@ -26,10 +91,14 @@ async function init() {
   if (document.getElementById('about-ver')) document.getElementById('about-ver').textContent = 'Version ' + ver;
 
   applyTheme(all.theme || 'light');
-  document.getElementById('sb-biz-name').textContent = all.businessName || 'My Print Shop';
-  document.getElementById('sb-biz-contact').textContent = all.contact || '';
+
+  const bizName = all.businessName || 'My Print Shop';
+  document.getElementById('sb-biz-name').textContent = bizName;
+  document.getElementById('sb-biz-avatar').textContent = bizName.charAt(0).toUpperCase();
+
   populateSettings(all);
   renderHistory();
+  checkPrinterStatus();
 
   document.getElementById('s-show-tax').addEventListener('change', function() {
     document.getElementById('tax-row').style.display = this.checked ? 'flex' : 'none';
@@ -544,7 +613,8 @@ window.saveSettings = async function() {
   await window.api.setStore('colorSensitivity',colorSensitivity); await window.api.setStore('theme',theme);
   state.pricing=pricing; state.currency=cur;
   state.settings={...state.settings,businessName:bizName,address,contact,currency:cur,pricing,showTax,taxRate,colorSensitivity,theme};
-  document.getElementById('sb-biz-name').textContent=bizName||'My Print Shop';
+  document.getElementById('sb-biz-name').textContent = bizName || 'My Print Shop';
+  document.getElementById('sb-biz-avatar').textContent = (bizName || 'M').charAt(0).toUpperCase();
   document.getElementById('sb-biz-contact').textContent=contact||'';
   updateCurrencySymbols(cur); applyTheme(theme); toast('Settings saved!');
 };
