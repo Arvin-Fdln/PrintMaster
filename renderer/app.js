@@ -86,9 +86,16 @@ async function init() {
   state.pricing = all.pricing || state.pricing;
   state.currency = all.currency || '₱';
 
-  const ver = await window.api.getVersion();
-  document.getElementById('app-ver').textContent = 'v' + ver;
-  if (document.getElementById('about-ver')) document.getElementById('about-ver').textContent = 'Version ' + ver;
+  // Load real version from main process
+  try {
+    const ver = await window.api.getVersion();
+    if (ver) {
+      document.getElementById('app-ver').textContent = 'v' + ver;
+      if (document.getElementById('about-ver')) document.getElementById('about-ver').textContent = 'Version ' + ver;
+    }
+  } catch(e) {
+    console.error('Could not load version:', e);
+  }
 
   applyTheme(all.theme || 'light');
 

@@ -1,6 +1,6 @@
 {
   "name": "printmaster",
-  "version": "1.0.0",
+  "version": "2.2.0",
   "description": "Professional PDF print cost analyzer for print shops",
   "main": "main.js",
   "author": "PrintMaster",

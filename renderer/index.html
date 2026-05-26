@@ -9,7 +9,8 @@
 <body class="theme-light">
 
 <!-- SIDEBAR -->
-<aside class="sidebar" id="sidebar">  <div class="sidebar-top">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
     <!-- Logo row with toggle at right -->
     <div class="app-logo">
       <div class="logo-left">
@@ -24,7 +25,7 @@
         </div>
         <div>
           <div class="app-name">PrintMaster</div>
-          <div class="app-ver" id="app-ver">v2.0.0</div>
+          <div class="app-ver" id="app-ver">v2.2.0</div>
         </div>
       </div>
       <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" title="Collapse sidebar">
@@ -40,44 +41,43 @@
     <div class="nav-scroll">
       <div class="nav-section-label">Workflow</div>
       <nav class="nav">
-        <button class="nav-item active" data-page="scan" onclick="gotoPage('scan')">
+        <button class="nav-item active" data-page="scan" data-label="Scan & Analyze" onclick="gotoPage('scan')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3H5a2 2 0 00-2 2v4"/><path d="M15 3h4a2 2 0 012 2v4"/><path d="M9 21H5a2 2 0 01-2-2v-4"/><path d="M15 21h4a2 2 0 002-2v-4"/><rect x="7" y="8" width="10" height="8" rx="1"/></svg>
-          Scan & Analyze
+          <span>Scan & Analyze</span>
         </button>
-        <button class="nav-item" data-page="quote" onclick="gotoPage('quote')">
+        <button class="nav-item" data-page="quote" data-label="Quote" onclick="gotoPage('quote')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
-          Quote
+          <span>Quote</span>
         </button>
       </nav>
 
       <div class="nav-section-label">Management</div>
       <nav class="nav">
-        <button class="nav-item" data-page="history" onclick="gotoPage('history')">
+        <button class="nav-item" data-page="history" data-label="Job History" onclick="gotoPage('history')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          Job History
+          <span>Job History</span>
         </button>
       </nav>
 
       <div class="nav-section-label">Settings</div>
       <nav class="nav">
-        <button class="nav-item" data-page="settings" onclick="gotoPage('settings')">
+        <button class="nav-item" data-page="settings" data-label="Settings" onclick="gotoPage('settings')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-          Settings
+          <span>Settings</span>
         </button>
       </nav>
     </div>
   </div>
 
-  <!-- Bottom: printer dropdown + shop info -->
-  <div class="sidebar-bottom" style="position:relative;">
-    <!-- Printer list dropdown (pops up above) -->
+  <!-- Bottom: shop info + printer popup -->
+  <div class="sidebar-bottom">
+    <!-- Printer popup — renders outside sidebar flow -->
     <div class="printer-dropdown" id="printer-dropdown">
       <div class="printer-dropdown-header">Connected Printers</div>
       <div id="printer-list"><div class="no-printers">Loading...</div></div>
     </div>
 
-    <!-- Shop card — click to toggle printer list -->
-    <div class="biz-card" onclick="togglePrinterDropdown()">
+    <div class="biz-card" onclick="togglePrinterDropdown()" title="Printers">
       <div class="biz-avatar" id="sb-biz-avatar">M</div>
       <div class="biz-info">
         <div class="biz-name" id="sb-biz-name">My Print Shop</div>
@@ -86,19 +86,11 @@
           <span class="status-text" id="printer-status-text">Checking...</span>
         </div>
       </div>
-      <svg viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" width="14" height="14" id="biz-chevron" style="flex-shrink:0;transition:transform 0.2s;"><polyline points="18 15 12 9 6 15"/></svg>
+      <svg class="biz-chevron" id="biz-chevron" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" width="13" height="13"><polyline points="18 15 12 9 6 15"/></svg>
     </div>
   </div>
 </aside>
 
-<!-- Floating reopen button — only visible when sidebar is collapsed -->
-<button class="sidebar-reopen" id="sidebar-reopen" onclick="toggleSidebar()" title="Open sidebar">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-    <line x1="3" y1="6" x2="21" y2="6"/>
-    <line x1="3" y1="12" x2="21" y2="12"/>
-    <line x1="3" y1="18" x2="21" y2="18"/>
-  </svg>
-</button>
 <main class="main-content">
 
   <!-- SCAN PAGE -->
