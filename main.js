@@ -33,7 +33,7 @@ function createLoginWindow() {
   loginWindow = new BrowserWindow({
     width: 440, height: 560, resizable: false, frame: false, titleBarStyle: 'hidden',
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.js') },
-    icon: path.join(__dirname, 'assets', 'icon.png'), backgroundColor: '#f8f7f4'
+    icon: process.platform === 'win32' ? path.join(__dirname, 'assets', 'icon.ico') : path.join(__dirname, 'assets', 'icon.png'), backgroundColor: '#f8f7f4'
   });
   loginWindow.loadFile('renderer/login.html');
 }
@@ -42,7 +42,7 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 900, minHeight: 600,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: false, preload: path.join(__dirname, 'preload.js'), webSecurity: true },
-    icon: path.join(__dirname, 'assets', 'icon.png'), backgroundColor: '#f8f7f4', show: false
+    icon: process.platform === 'win32' ? path.join(__dirname, 'assets', 'icon.ico') : path.join(__dirname, 'assets', 'icon.png'), backgroundColor: '#f8f7f4', show: false
   });
   mainWindow.loadFile('renderer/index.html');
   mainWindow.once('ready-to-show', () => {
