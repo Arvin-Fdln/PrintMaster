@@ -1,6 +1,6 @@
 {
   "name": "printmaster",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Professional PDF print cost analyzer for print shops",
   "main": "main.js",
   "author": "PrintMaster",
@@ -12,6 +12,7 @@
     "build:linux": "electron-builder --linux"
   },
   "dependencies": {
+    "bcrypt": "^5.1.1",
     "electron-store": "^8.2.0",
     "pdfjs-dist": "^4.4.168"
   },

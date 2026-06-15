@@ -1,9 +1,9 @@
 let pin = '';
 
+// Hash PIN without external dependency in login
 function hashPin(p) {
-  let h = 0;
-  for (let i = 0; i < p.length; i++) { h = Math.imul(31, h) + p.charCodeAt(i) | 0; }
-  return 'pm_' + Math.abs(h).toString(16).padStart(8,'0');
+  // Send raw PIN to main process for bcrypt comparison
+  return p;
 }
 
 function updateDots() {
@@ -36,7 +36,8 @@ async function verify() {
       return;
     }
     
-    const ok = await window.api.verifyPin(hashPin(pin));
+    // Send PIN directly - main process will hash and compare with bcrypt
+    const ok = await window.api.verifyPin(pin);
     if (ok) {
       await window.api.launchMain();
     } else {

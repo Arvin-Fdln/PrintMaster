@@ -1,3 +1,21 @@
+// ===== SECURITY & UTILITIES =====
+function escapeHtml(text) {
+  if (typeof text !== 'string') return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function validateNumber(val, min = 0, max = 999) {
+  const num = parseFloat(val) || min;
+  return Math.max(min, Math.min(max, num));
+}
+
+function validateString(str, maxLen = 256) {
+  if (typeof str !== 'string') return '';
+  return str.slice(0, maxLen);
+}
+
 // pdfjsLib loaded via bootstrap in index.html
 const pdfjsLib = window.pdfjsLib;
 
@@ -43,12 +61,11 @@ function renderPrinterList() {
   list.innerHTML = cachedPrinters.map(p => `
     <div class="printer-item">
       <div class="status-dot ${p.status === 0 ? '' : 'offline'}"></div>
-      <div class="printer-name">${p.name}</div>
+      <div class="printer-name">${escapeHtml(p.name)}</div>
       ${p.isDefault ? '<div class="printer-default">Default</div>' : ''}
     </div>`).join('');
 }
 
-// Close dropdown when clicking outside
 document.addEventListener('click', e => {
   const bottom = document.querySelector('.sidebar-bottom');
   if (bottom && !bottom.contains(e.target) && printerDropdownOpen) {
@@ -81,42 +98,49 @@ async function checkPrinterStatus() {
 
 // ===== INIT =====
 async function init() {
-  const all = await window.api.getAllStore();
-  state.settings = all;
-  state.pricing = all.pricing || state.pricing;
-  state.currency = all.currency || '₱';
-
-  // Load real version from main process
   try {
-    const ver = await window.api.getVersion();
-    if (ver) {
-      document.getElementById('app-ver').textContent = 'v' + ver;
-      if (document.getElementById('about-ver')) document.getElementById('about-ver').textContent = 'Version ' + ver;
+    const all = await window.api.getAllStore();
+    state.settings = all;
+    state.pricing = all.pricing || state.pricing;
+    state.currency = all.currency || '₱';
+
+    try {
+      const ver = await window.api.getVersion();
+      if (ver) {
+        document.getElementById('app-ver').textContent = 'v' + ver;
+        if (document.getElementById('about-ver')) document.getElementById('about-ver').textContent = 'Version ' + ver;
+      }
+    } catch(e) {
+      console.error('Could not load version:', e);
     }
-  } catch(e) {
-    console.error('Could not load version:', e);
+
+    applyTheme(all.theme || 'light');
+
+    const bizName = validateString(all.businessName || 'My Print Shop', 100);
+    document.getElementById('sb-biz-name').textContent = bizName;
+    document.getElementById('sb-biz-avatar').textContent = bizName.charAt(0).toUpperCase();
+
+    populateSettings(all);
+    renderHistory();
+    checkPrinterStatus();
+
+    document.getElementById('s-show-tax').addEventListener('change', function() {
+      document.getElementById('tax-row').style.display = this.checked ? 'flex' : 'none';
+    });
+  } catch (err) {
+    console.error('Init error:', err);
+    toast('Failed to initialize app');
   }
-
-  applyTheme(all.theme || 'light');
-
-  const bizName = all.businessName || 'My Print Shop';
-  document.getElementById('sb-biz-name').textContent = bizName;
-  document.getElementById('sb-biz-avatar').textContent = bizName.charAt(0).toUpperCase();
-
-  populateSettings(all);
-  renderHistory();
-  checkPrinterStatus();
-
-  document.getElementById('s-show-tax').addEventListener('change', function() {
-    document.getElementById('tax-row').style.display = this.checked ? 'flex' : 'none';
-  });
 }
 
 // ===== NAVIGATION =====
 window.gotoPage = function(id) {
+  if (typeof id !== 'string') return;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.getElementById('page-' + id).classList.add('active');
+  const page = document.getElementById('page-' + id);
+  if (!page) return;
+  page.classList.add('active');
   document.querySelector(`.nav-item[data-page="${id}"]`)?.classList.add('active');
   if (id === 'quote') buildQuote();
   if (id === 'history') renderHistory();
@@ -140,13 +164,31 @@ window.pageDrop = function(e) {
   const files = [...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.pdf'));
   if (files.length) loadFilesFromDrop(files);
 };
-async function loadFilesFromDrop(files) { for (const f of files) { const ab = await f.arrayBuffer(); await processPdf({ buffer: ab, name: f.name, size: f.size }); } }
+
+async function loadFilesFromDrop(files) {
+  for (const f of files) {
+    if (f.type !== 'application/pdf' && !f.name.endsWith('.pdf')) continue;
+    try {
+      const ab = await f.arrayBuffer();
+      await processPdf({ buffer: ab, name: f.name, size: f.size });
+    } catch (err) {
+      toast('Failed to load: ' + f.name);
+    }
+  }
+}
 
 // ===== OPEN PDF =====
 window.openPdfDialog = async function() {
-  const results = await window.api.openPdfDialog();
-  if (!results || !results.length) return;
-  for (const result of results) await processPdf(result);
+  try {
+    const results = await window.api.openPdfDialog();
+    if (!results || !results.length) return;
+    for (const result of results) {
+      if (result) await processPdf(result);
+    }
+  } catch (err) {
+    console.error('Dialog error:', err);
+    toast('Failed to open PDF');
+  }
 };
 
 // ===== PROCESS PDF =====
@@ -156,7 +198,7 @@ async function processPdf({ buffer, name, size, fileId }) {
   document.getElementById('scan-progress').style.display = 'block';
   document.getElementById('scan-file-info').innerHTML = `
     <div class="scan-file-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
-    <div><div class="scan-file-name">${name}</div><div class="scan-file-size">${(size/1024/1024).toFixed(2)} MB</div></div>`;
+    <div><div class="scan-file-name">${escapeHtml(name)}</div><div class="scan-file-size">${(size/1024/1024).toFixed(2)} MB</div></div>`;
   setProgress(5, 'Loading PDF...');
   try {
     const pdfData = Array.isArray(buffer) ? new Uint8Array(buffer) : new Uint8Array(buffer);
@@ -199,11 +241,20 @@ async function processPdf({ buffer, name, size, fileId }) {
     let pdfBuffer = buffer;
     if (Array.isArray(buffer)) pdfBuffer = new Uint8Array(buffer).buffer;
     const pdfId = Date.now() + Math.random();
-    state.pdfs.push({ id: pdfId, fileName: name, fileSize: size, fileId: fileId||null, pdfBuffer, pages });
+    state.pdfs.push({ id: pdfId, fileName: validateString(name, 256), fileSize: size, fileId: fileId||null, pdfBuffer, pages });
     state.activePdfId = pdfId;
+    
+    // Cleanup old buffers if too many PDFs
+    if (state.pdfs.length > 5) {
+      const oldPdf = state.pdfs.shift();
+      if (oldPdf) oldPdf.pdfBuffer = null;
+    }
+    
     setTimeout(() => renderResults(), 300);
   } catch (err) {
+    console.error('PDF processing error:', err);
     setProgress(0, 'Error: ' + err.message);
+    resetScan(); // Cleanup on error
     toast('Failed to read PDF: ' + err.message);
   }
 }
@@ -218,7 +269,7 @@ function detectColor(imgData) {
   const d = imgData.data;
   let colorPx = 0, total = 0;
   const step = 8;
-  const sens = state.settings.colorSensitivity || 5;
+  const sens = validateNumber(state.settings.colorSensitivity || 5, 1, 10);
   const satThreshold = 0.14 - (sens * 0.01);
   const ratioThreshold = 0.025 - (sens * 0.002);
   for (let i = 0; i < d.length; i += 4 * step) {
@@ -262,7 +313,7 @@ function renderPdfTabs() {
   document.getElementById('pdf-tabs').innerHTML = state.pdfs.map(pdf => `
     <div class="pdf-tab ${pdf.id===state.activePdfId?'active':''}" onclick="switchPdfTab(${pdf.id})">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="13" height="13"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-      <span class="pdf-tab-name">${pdf.fileName}</span>
+      <span class="pdf-tab-name">${escapeHtml(pdf.fileName)}</span>
       <span class="pdf-tab-count">${pdf.pages.length}pg</span>
       <button class="pdf-tab-close" onclick="removePdf(${pdf.id},event)">×</button>
     </div>`).join('');
@@ -271,6 +322,8 @@ function renderPdfTabs() {
 window.switchPdfTab = function(id) { state.activePdfId = id; renderPdfTabs(); renderMetrics(); renderTable(); };
 window.removePdf = function(id, e) {
   e.stopPropagation();
+  const pdf = state.pdfs.find(p => p.id === id);
+  if (pdf) pdf.pdfBuffer = null; // Cleanup
   state.pdfs = state.pdfs.filter(p => p.id !== id);
   if (!state.pdfs.length) { resetScan(); return; }
   if (state.activePdfId === id) state.activePdfId = state.pdfs[0].id;
@@ -286,10 +339,10 @@ function renderMetrics() {
   const total = included.reduce((s,p) => s + getPageCost(effectiveColor(p), p.sizeKey), 0) * state.copies;
   document.getElementById('metrics-row').innerHTML = `
     <div class="metric-card"><div class="metric-label">Total Pages</div><div class="metric-value">${pages.length}</div><div class="metric-sub">${included.length} included</div></div>
-    <div class="metric-card"><div class="metric-label">Color Pages</div><div class="metric-value">${colorPgs}</div><div class="metric-sub">${included.length?Math.round(colorPgs/included.length*100):0}% of included</div></div>
-    <div class="metric-card"><div class="metric-label">B&W Pages</div><div class="metric-value">${included.length-colorPgs}</div><div class="metric-sub">${included.length?Math.round((included.length-colorPgs)/included.length*100):0}% of included</div></div>
+    <div class="metric-card"><div class="metric-label">Color Pages</div><div class="metric-value">${colorPgs}</div><div class="metric-sub">${included.length?Math.round(colorPgs/included.length*100)+'%':'—'}</div></div>
+    <div class="metric-card"><div class="metric-label">B&W Pages</div><div class="metric-value">${included.length-colorPgs}</div><div class="metric-sub">${included.length?Math.round((included.length-colorPgs)/included.length*100)+'%':'—'}</div></div>
     <div class="metric-card"><div class="metric-label">Est. Total</div><div class="metric-value">${cur}${total.toFixed(2)}</div><div class="metric-sub">${state.copies} cop${state.copies===1?'y':'ies'}</div></div>`;
-  document.getElementById('results-file').innerHTML = `📄 ${pdf.fileName} — ${(pdf.fileSize/1024/1024).toFixed(2)} MB`;
+  document.getElementById('results-file').innerHTML = `📄 ${escapeHtml(pdf.fileName)} — ${(pdf.fileSize/1024/1024).toFixed(2)} MB`;
 }
 
 function renderTable() {
@@ -323,19 +376,19 @@ function renderTable() {
           <option value="a3" ${p.sizeKey==='a3'?'selected':''}>A3</option>
         </select>
       </td>
-      <td style="color:var(--text-secondary);font-size:12px;${excluded?'opacity:0.4':''}">${cur}${getPageCost(isColor,p.sizeKey).toFixed(2)}/pg</td>
-      <td style="text-align:right;font-weight:500;${excluded?'opacity:0.4;text-decoration:line-through':''}">${excluded?'—':cur+p.cost.toFixed(2)}</td>
+      <td style="color:var(--text-secondary);font-size:12px;${excluded?'opacity:0.4':''}">$${getPageCost(isColor,p.sizeKey).toFixed(2)}/pg</td>
+      <td style="text-align:right;font-weight:500;${excluded?'opacity:0.4;text-decoration:line-through':''}">$${excluded?'—':cur+p.cost.toFixed(2)}</td>
     </tr>`;
   }).join('');
 }
 
 function updateTotalBar() {
-  const cur = state.currency, copies = state.copies;
+  const cur = state.currency, copies = validateNumber(state.copies, 1, 999);
   const included = allPages().filter(p => p.included);
   const total = included.reduce((s,p) => s + getPageCost(effectiveColor(p), p.sizeKey), 0) * copies;
   const colorCount = included.filter(p => effectiveColor(p)).length;
   const pdf = activePdf();
-  document.getElementById('total-summary').textContent = `${pdf?pdf.pages.filter(p=>p.included).length:0} of ${pdf?.pages.length||0} pages included · ${colorCount} color · ${included.length-colorCount} B&W · ${copies} cop${copies===1?'y':'ies'}`;
+  document.getElementById('total-summary').textContent = `${pdf?pdf.pages.filter(p=>p.included).length:0} of ${pdf?.pages.length||0} pages included · ${colorCount} color · ${included.length-colorCount} B&W`;
   document.getElementById('grand-total').textContent = `${cur}${total.toFixed(2)}`;
   const mv = document.querySelector('.metric-card:last-child .metric-value');
   if (mv) mv.textContent = `${cur}${total.toFixed(2)}`;
@@ -344,10 +397,11 @@ function updateTotalBar() {
 }
 
 window.toggleInclude = function(idx, val) { const pdf = activePdf(); if (!pdf) return; pdf.pages[idx].included = val; renderTable(); renderMetrics(); updateTotalBar(); };
-window.overrideSize = function(idx, newSize) { const pdf = activePdf(); if (!pdf) return; pdf.pages[idx].sizeKey = newSize; pdf.pages[idx].cost = getPageCost(effectiveColor(pdf.pages[idx]), newSize); renderTable(); updateTotalBar(); };
+window.overrideSize = function(idx, newSize) { const pdf = activePdf(); if (!pdf) return; if (['letter','legal','a3','a4'].includes(newSize)) { pdf.pages[idx].sizeKey = newSize; pdf.pages[idx].cost = getPageCost(effectiveColor(pdf.pages[idx]), newSize); renderTable(); updateTotalBar(); } };
 window.setColorOverride = function(idx, val) { const pdf = activePdf(); if (!pdf) return; pdf.pages[idx].colorOverride = val; pdf.pages[idx].cost = getPageCost(effectiveColor(pdf.pages[idx]), pdf.pages[idx].sizeKey); renderTable(); updateTotalBar(); };
-window.recalcCopies = function() { state.copies = Math.max(1, parseInt(document.getElementById('copies-input').value)||1); renderMetrics(); updateTotalBar(); };
+window.recalcCopies = function() { state.copies = validateNumber(document.getElementById('copies-input').value, 1, 999); renderMetrics(); updateTotalBar(); };
 window.resetScan = function() {
+  state.pdfs.forEach(p => p.pdfBuffer = null);
   state.pdfs = []; state.activePdfId = null; state.copies = 1;
   document.getElementById('copies-input').value = 1;
   document.getElementById('drop-zone').style.display = 'block';
@@ -363,8 +417,8 @@ let ppState = {
   pages: [],
   currentIdx: 0,
   zoom: 1.0,
-  rotations: [],      // per-page rotation in degrees
-  scale: 100,         // print scale %
+  rotations: [],
+  scale: 100,
   orientation: 'portrait'
 };
 
@@ -380,23 +434,19 @@ window.printPdf = async function() {
   ppState.scale = 100;
   ppState.orientation = 'portrait';
 
-  // Set filename and page count
-  document.getElementById('pp-filename').textContent = pdf.fileName;
+  document.getElementById('pp-filename').textContent = escapeHtml(pdf.fileName);
   document.getElementById('pp-page-count-info').textContent = `${includedPages.length} page${includedPages.length!==1?'s':''}`;
 
-  // Reset scale UI
   document.getElementById('pp-scale-range').value = 100;
   document.getElementById('pp-scale-num').value = 100;
 
-  // Reset orientation
   document.getElementById('pp-orient-port').classList.add('active');
   document.getElementById('pp-orient-land').classList.remove('active');
 
-  // Load printers
   const printers = await window.api.getPrinters();
   const sel = document.getElementById('pp-printer');
   sel.innerHTML = printers.length
-    ? printers.map(p => `<option value="${p.name}" ${p.isDefault?'selected':''}>${p.name}${p.isDefault?' (Default)':''}</option>`).join('')
+    ? printers.map(p => `<option value="${escapeHtml(p.name)}" ${p.isDefault?'selected':''}>${escapeHtml(p.name)}${p.isDefault?' (Default)':''}</option>`).join('')
     : '<option value="__default__">Default Printer</option>';
 
   ppRenderCurrentPage();
@@ -410,25 +460,20 @@ function ppRenderCurrentPage() {
   const pg = pages[idx];
   const rot = ppState.rotations[idx];
 
-  // Update image
   const img = document.getElementById('pp-current-img');
   img.src = pg.full || pg.thumb;
   img.style.transform = rot ? `rotate(${rot}deg)` : '';
 
-  // Apply zoom to container
   const container = document.getElementById('pp-page-container');
   container.style.transform = `scale(${ppState.zoom})`;
   container.style.transformOrigin = 'center top';
 
-  // Page counter
   document.getElementById('pp-page-counter').textContent = `${idx+1} / ${pages.length}`;
   document.getElementById('pp-prev-btn').disabled = idx === 0;
   document.getElementById('pp-next-btn').disabled = idx === pages.length - 1;
 
-  // Zoom label
   document.getElementById('pp-zoom-label').textContent = Math.round(ppState.zoom * 100) + '%';
 
-  // Info strip
   const isColor = effectiveColor(pg);
   document.getElementById('pp-info-strip').innerHTML =
     `Page ${pg.num} &nbsp;·&nbsp; ${sizeName(pg.sizeKey)} &nbsp;·&nbsp;
@@ -456,22 +501,22 @@ window.ppRotate = function(deg) {
 };
 
 window.ppScaleChange = function(val) {
-  ppState.scale = parseInt(val);
-  document.getElementById('pp-scale-num').value = val;
+  ppState.scale = validateNumber(val, 50, 150);
+  document.getElementById('pp-scale-num').value = ppState.scale;
 };
 window.ppScaleNumChange = function(val) {
-  const v = Math.min(150, Math.max(50, parseInt(val) || 100));
+  const v = validateNumber(val, 50, 150);
   ppState.scale = v;
   document.getElementById('pp-scale-range').value = v;
 };
 
 window.ppSetOrientation = function(ori) {
+  if (!['portrait', 'landscape'].includes(ori)) ori = 'portrait';
   ppState.orientation = ori;
   document.getElementById('pp-orient-port').classList.toggle('active', ori === 'portrait');
   document.getElementById('pp-orient-land').classList.toggle('active', ori === 'landscape');
 };
 
-// Mouse wheel zoom in preview viewport
 document.addEventListener('DOMContentLoaded', () => {
   const vp = document.getElementById('pp-viewport');
   if (vp) {
@@ -491,6 +536,7 @@ window.closePrintPreview = function() {
 
 window.confirmPrint = async function() {
   const btn = document.getElementById('pp-print-btn');
+  const originalText = btn.innerHTML;
   btn.textContent = 'Printing...'; btn.disabled = true;
 
   const printData = {
@@ -500,7 +546,7 @@ window.confirmPrint = async function() {
       heightPt: pg.heightPt,
       num: pg.num,
       colored: effectiveColor(pg),
-      rotation: ppState.rotations[i]
+      rotation: ppState.rotations[i] || 0
     })),
     printerName: document.getElementById('pp-printer').value,
     duplex: document.getElementById('pp-duplex').value,
@@ -508,14 +554,19 @@ window.confirmPrint = async function() {
     landscape: ppState.orientation === 'landscape'
   };
 
-  const result = await window.api.printPdf(printData);
+  try {
+    const result = await window.api.printPdf(printData);
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2H6z"/></svg> Printed!`;
+    btn.disabled = false;
 
-  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Print Now`;
-  btn.disabled = false;
-
-  if (result?.ok) { closePrintPreview(); toast('Print job sent!'); }
-  else if (result?.error && result.error !== 'Cancelled') { toast('Print error: ' + result.error); }
-  else { closePrintPreview(); }
+    if (result?.ok) { closePrintPreview(); toast('Print job sent!'); }
+    else if (result?.error && result.error !== 'Cancelled') { toast('Print error: ' + result.error); }
+    else { closePrintPreview(); }
+  } catch (err) {
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+    toast('Print failed: ' + err.message);
+  }
 };
 
 // ===== QUOTE =====
@@ -526,11 +577,11 @@ function buildQuote() {
   document.getElementById('quote-content').style.display = hasData ? 'block' : 'none';
   if (!hasData) return;
   const s = state.settings, cur = state.currency, copies = state.copies;
-  document.getElementById('q-biz-name').textContent = s.businessName || 'My Print Shop';
-  document.getElementById('q-biz-meta').innerHTML = [s.address, s.contact].filter(Boolean).join('<br>');
+  document.getElementById('q-biz-name').textContent = escapeHtml(s.businessName || 'My Print Shop');
+  document.getElementById('q-biz-meta').innerHTML = [s.address, s.contact].filter(Boolean).map(x => escapeHtml(x)).join('<br>');
   document.getElementById('q-ref').textContent = 'Ref: PM-' + Date.now().toString().slice(-6);
-  document.getElementById('q-date').textContent = new Date().toLocaleDateString('en-PH', { year:'numeric', month:'long', day:'numeric' });
-  document.getElementById('q-file-row').innerHTML = `<strong>Document${state.pdfs.length>1?'s':''}:</strong> ${state.pdfs.map(p=>p.fileName).join(', ')} &nbsp;·&nbsp; ${included.length} pages &nbsp;·&nbsp; ${copies} cop${copies===1?'y':'ies'}`;
+  document.getElementById('q-date').textContent = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  document.getElementById('q-file-row').innerHTML = `<strong>Document${state.pdfs.length>1?'s':''}:</strong> ${state.pdfs.map(p=>escapeHtml(p.fileName)).join(', ')} &nbsp;·&nbsp; ${included.length} pages &nbsp;·&nbsp; ${state.copies} cop${state.copies===1?'y':'ies'}`;
   const groups = {};
   included.forEach(p => {
     const isColor = effectiveColor(p);
@@ -541,13 +592,13 @@ function buildQuote() {
   let subtotal = 0;
   document.getElementById('q-tbody').innerHTML = Object.values(groups).map(g => {
     const lineTotal = g.unitCost * g.count * copies; subtotal += lineTotal;
-    return `<tr><td>${g.colored?'🎨 Color':'⬛ B&W'} — ${sizeName(g.sizeKey)} × ${g.count} page${g.count>1?'s':''} × ${copies} cop${copies===1?'y':'ies'}</td><td>${cur}${g.unitCost.toFixed(2)}</td><td>${g.count*copies}</td><td style="text-align:right;">${cur}${lineTotal.toFixed(2)}</td></tr>`;
+    return `<tr><td>${g.colored?'🎨 Color':'⬛ B&W'} — ${sizeName(g.sizeKey)} × ${g.count} page${g.count>1?'s':''} × ${copies} cop${copies===1?'y':'ies'}</td><td>${cur}${g.unitCost.toFixed(2)}</td><td>×${g.count*copies}</td><td style="text-align:right;">${cur}${lineTotal.toFixed(2)}</td></tr>`;
   }).join('');
-  const showTax = s.showTax, taxRate = parseFloat(s.taxRate)||0;
+  const showTax = s.showTax, taxRate = validateNumber(s.taxRate, 0, 100);
   const tax = showTax ? subtotal*(taxRate/100) : 0;
   const grand = subtotal + tax;
   let totalsHtml = `<div class="quote-total-row"><span>Subtotal</span><span>${cur}${subtotal.toFixed(2)}</span></div>`;
-  if (showTax) totalsHtml += `<div class="quote-total-row"><span>Tax (${taxRate}%)</span><span>${cur}${tax.toFixed(2)}</span></div>`;
+  if (showTax) totalsHtml += `<div class="quote-total-row"><span>Tax (${taxRate.toFixed(2)}%)</span><span>${cur}${tax.toFixed(2)}</span></div>`;
   totalsHtml += `<div class="quote-total-row grand"><span>TOTAL</span><span>${cur}${grand.toFixed(2)}</span></div>`;
   document.getElementById('q-totals').innerHTML = totalsHtml;
 }
@@ -555,77 +606,126 @@ function buildQuote() {
 window.saveJobFromQuote = async function() {
   const included = allPages().filter(p => p.included); if (!included.length) return;
   const total = included.reduce((s,p) => s + getPageCost(effectiveColor(p), p.sizeKey), 0) * state.copies;
-  await window.api.saveJob({ fileName: state.pdfs.map(p=>p.fileName).join(', '), pages: included.length, colorPages: included.filter(p=>effectiveColor(p)).length, copies: state.copies, total, currency: state.currency });
-  toast('Job saved to history!'); renderHistory();
+  try {
+    await window.api.saveJob({ fileName: state.pdfs.map(p=>p.fileName).join(', '), pages: included.length, colorPages: included.filter(p=>effectiveColor(p)).length, copies: state.copies, total, currency: state.currency });
+    toast('Job saved to history!'); renderHistory();
+  } catch (err) {
+    toast('Failed to save job');
+  }
 };
 
 // ===== HISTORY =====
 async function renderHistory() {
-  const history = (await window.api.getStore('jobHistory')) || [];
-  const el = document.getElementById('history-list');
-  const cur = state.currency;
-  if (!history.length) { el.innerHTML = `<div class="empty-state" style="margin-top:3rem;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" width="40" height="40"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>No jobs saved yet.</p></div>`; return; }
-  el.innerHTML = history.map(j => `
-    <div class="history-item">
-      <div><div class="history-file">📄 ${j.fileName||'Unknown'}</div><div class="history-meta">${j.pages} pages · ${j.colorPages} color · ${j.copies} cop${j.copies===1?'y':'ies'} · ${new Date(j.date).toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}</div></div>
-      <div style="display:flex;align-items:center;gap:12px;"><div class="history-amount">${j.currency||cur}${parseFloat(j.total).toFixed(2)}</div><button class="history-del" onclick="deleteJob(${j.id})">×</button></div>
-    </div>`).join('');
+  try {
+    const history = (await window.api.getStore('jobHistory')) || [];
+    const el = document.getElementById('history-list');
+    const cur = state.currency;
+    if (!history.length) { el.innerHTML = `<div class="empty-state" style="margin-top:3rem;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" width="40" height="40"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>No job history yet.</p></div>`; return; }
+    el.innerHTML = history.map(j => `
+      <div class="history-item">
+        <div><div class="history-file">📄 ${escapeHtml(j.fileName||'Unknown')}</div><div class="history-meta">${j.pages} pages · ${j.colorPages} color · ${j.copies} cop${j.copies===1?'y':'ies'} · ${new Date(j.date).toLocaleDateString()}</div></div>
+        <div style="display:flex;align-items:center;gap:12px;"><div class="history-amount">${j.currency||cur}${parseFloat(j.total).toFixed(2)}</div><button class="history-del" onclick="deleteJob(${j.id})">🗑</button></div>
+      </div>`).join('');
+  } catch (err) {
+    console.error('History error:', err);
+  }
 }
-window.deleteJob = async function(id) { await window.api.deleteJob(id); renderHistory(); };
-window.clearHistory = async function() { if (!confirm('Clear all job history?')) return; await window.api.setStore('jobHistory',[]); renderHistory(); };
+window.deleteJob = async function(id) { try { await window.api.deleteJob(id); renderHistory(); } catch (err) { toast('Failed to delete'); } };
+window.clearHistory = async function() { if (!confirm('Clear all job history?')) return; try { await window.api.setStore('jobHistory',[]); renderHistory(); } catch (err) { toast('Failed to clear'); } };
 
 // ===== SETTINGS =====
 function populateSettings(s) {
-  document.getElementById('s-biz-name').value = s.businessName||'';
-  document.getElementById('s-address').value = s.address||'';
-  document.getElementById('s-contact').value = s.contact||'';
-  document.getElementById('s-currency').value = s.currency||'₱';
+  document.getElementById('s-biz-name').value = validateString(s.businessName||'', 100);
+  document.getElementById('s-address').value = validateString(s.address||'', 200);
+  document.getElementById('s-contact').value = validateString(s.contact||'', 100);
+  document.getElementById('s-currency').value = validateString(s.currency||'₱', 5);
   const p = s.pricing||state.pricing;
-  document.getElementById('p-bw-letter').value = p.bw?.letter??3;
-  document.getElementById('p-bw-legal').value = p.bw?.legal??4;
-  document.getElementById('p-bw-a3').value = p.bw?.a3??6;
-  document.getElementById('p-color-letter').value = p.color?.letter??15;
-  document.getElementById('p-color-legal').value = p.color?.legal??20;
-  document.getElementById('p-color-a3').value = p.color?.a3??30;
+  document.getElementById('p-bw-letter').value = validateNumber(p.bw?.letter, 0, 999) || 3;
+  document.getElementById('p-bw-legal').value = validateNumber(p.bw?.legal, 0, 999) || 4;
+  document.getElementById('p-bw-a3').value = validateNumber(p.bw?.a3, 0, 999) || 6;
+  document.getElementById('p-color-letter').value = validateNumber(p.color?.letter, 0, 999) || 15;
+  document.getElementById('p-color-legal').value = validateNumber(p.color?.legal, 0, 999) || 20;
+  document.getElementById('p-color-a3').value = validateNumber(p.color?.a3, 0, 999) || 30;
   document.getElementById('s-default-size').value = p.defaultSize||'letter';
   document.getElementById('s-show-tax').checked = !!s.showTax;
   document.getElementById('tax-row').style.display = s.showTax?'flex':'none';
-  document.getElementById('s-tax-rate').value = s.taxRate||12;
-  document.getElementById('s-color-sensitivity').value = s.colorSensitivity||5;
+  document.getElementById('s-tax-rate').value = validateNumber(s.taxRate, 0, 100) || 12;
+  document.getElementById('s-color-sensitivity').value = validateNumber(s.colorSensitivity, 1, 10) || 5;
   document.getElementById('s-dark').checked = s.theme==='dark';
-  updateCurrencySymbols(s.currency||'₱');
+  updateCurrencySymbols(validateString(s.currency||'₱', 5));
 }
-function updateCurrencySymbols(sym) { for (let i=1;i<=6;i++) { const el=document.getElementById('cs'+i); if(el) el.textContent=sym; } }
+function updateCurrencySymbols(sym) { for (let i=1;i<=6;i++) { const el=document.getElementById('cs'+i); if(el) el.textContent=escapeHtml(sym); } }
 
 window.saveSettings = async function() {
-  const pin = document.getElementById('s-pin').value;
-  const pin2 = document.getElementById('s-pin2').value;
-  if (pin||pin2) {
-    if (pin.length!==4||!/^\d{4}$/.test(pin)) { document.getElementById('pin-status').textContent='⚠ PIN must be 4 digits.'; document.getElementById('pin-status').style.color='var(--danger)'; return; }
-    if (pin!==pin2) { document.getElementById('pin-status').textContent='⚠ PINs do not match.'; document.getElementById('pin-status').style.color='var(--danger)'; return; }
-    let h=0; for (let i=0;i<pin.length;i++) h=Math.imul(31,h)+pin.charCodeAt(i)|0;
-    await window.api.setStore('pinHash','pm_'+Math.abs(h).toString(16).padStart(8,'0'));
-    document.getElementById('pin-status').textContent='✓ PIN saved.'; document.getElementById('pin-status').style.color='var(--success)';
-    document.getElementById('s-pin').value=''; document.getElementById('s-pin2').value='';
+  try {
+    const pin = document.getElementById('s-pin').value;
+    const pin2 = document.getElementById('s-pin2').value;
+    if (pin||pin2) {
+      if (pin.length!==4||!/^\d{4}$/.test(pin)) { document.getElementById('pin-status').textContent='⚠ PIN must be 4 digits.'; document.getElementById('pin-status').style.color='var(--danger)'; return; }
+      if (pin!==pin2) { document.getElementById('pin-status').textContent='⚠ PINs do not match.'; document.getElementById('pin-status').style.color='var(--danger)'; return; }
+      const result = await window.api.setPin(pin);
+      if (result.ok) {
+        document.getElementById('pin-status').textContent='✓ PIN saved securely.'; document.getElementById('pin-status').style.color='var(--success)';
+      } else {
+        document.getElementById('pin-status').textContent='⚠ ' + result.error; document.getElementById('pin-status').style.color='var(--danger)';
+        return;
+      }
+      document.getElementById('s-pin').value=''; document.getElementById('s-pin2').value='';
+    }
+    const cur = validateString(document.getElementById('s-currency').value||'₱', 5);
+    const pricing = {
+      bw:{
+        letter:validateNumber(document.getElementById('p-bw-letter').value, 0, 999),
+        legal:validateNumber(document.getElementById('p-bw-legal').value, 0, 999),
+        a3:validateNumber(document.getElementById('p-bw-a3').value, 0, 999)
+      },
+      color:{
+        letter:validateNumber(document.getElementById('p-color-letter').value, 0, 999),
+        legal:validateNumber(document.getElementById('p-color-legal').value, 0, 999),
+        a3:validateNumber(document.getElementById('p-color-a3').value, 0, 999)
+      }
+    };
+    const bizName=validateString(document.getElementById('s-biz-name').value, 100);
+    const address=validateString(document.getElementById('s-address').value, 200);
+    const contact=validateString(document.getElementById('s-contact').value, 100);
+    const showTax=document.getElementById('s-show-tax').checked;
+    const taxRate=validateNumber(document.getElementById('s-tax-rate').value, 0, 100);
+    const colorSensitivity=validateNumber(document.getElementById('s-color-sensitivity').value, 1, 10);
+    const theme=document.getElementById('s-dark').checked?'dark':'light';
+    await window.api.setStore('businessName',bizName);
+    await window.api.setStore('address',address);
+    await window.api.setStore('contact',contact);
+    await window.api.setStore('currency',cur);
+    await window.api.setStore('pricing',pricing);
+    await window.api.setStore('showTax',showTax);
+    await window.api.setStore('taxRate',taxRate);
+    await window.api.setStore('colorSensitivity',colorSensitivity);
+    await window.api.setStore('theme',theme);
+    state.pricing=pricing;
+    state.currency=cur;
+    state.settings={...state.settings,businessName:bizName,address,contact,currency:cur,pricing,showTax,taxRate,colorSensitivity,theme};
+    document.getElementById('sb-biz-name').textContent = bizName || 'My Print Shop';
+    document.getElementById('sb-biz-avatar').textContent = (bizName || 'M').charAt(0).toUpperCase();
+    document.getElementById('sb-biz-contact').textContent=contact||'';
+    updateCurrencySymbols(cur);
+    applyTheme(theme);
+    toast('Settings saved!');
+  } catch (err) {
+    console.error('Settings save error:', err);
+    toast('Failed to save settings');
   }
-  const cur = document.getElementById('s-currency').value||'₱';
-  const pricing = { bw:{letter:+document.getElementById('p-bw-letter').value,legal:+document.getElementById('p-bw-legal').value,a3:+document.getElementById('p-bw-a3').value}, color:{letter:+document.getElementById('p-color-letter').value,legal:+document.getElementById('p-color-legal').value,a3:+document.getElementById('p-color-a3').value}, defaultSize:document.getElementById('s-default-size').value };
-  const bizName=document.getElementById('s-biz-name').value, address=document.getElementById('s-address').value, contact=document.getElementById('s-contact').value;
-  const showTax=document.getElementById('s-show-tax').checked, taxRate=+document.getElementById('s-tax-rate').value;
-  const colorSensitivity=+document.getElementById('s-color-sensitivity').value;
-  const theme=document.getElementById('s-dark').checked?'dark':'light';
-  await window.api.setStore('businessName',bizName); await window.api.setStore('address',address); await window.api.setStore('contact',contact);
-  await window.api.setStore('currency',cur); await window.api.setStore('pricing',pricing);
-  await window.api.setStore('showTax',showTax); await window.api.setStore('taxRate',taxRate);
-  await window.api.setStore('colorSensitivity',colorSensitivity); await window.api.setStore('theme',theme);
-  state.pricing=pricing; state.currency=cur;
-  state.settings={...state.settings,businessName:bizName,address,contact,currency:cur,pricing,showTax,taxRate,colorSensitivity,theme};
-  document.getElementById('sb-biz-name').textContent = bizName || 'My Print Shop';
-  document.getElementById('sb-biz-avatar').textContent = (bizName || 'M').charAt(0).toUpperCase();
-  document.getElementById('sb-biz-contact').textContent=contact||'';
-  updateCurrencySymbols(cur); applyTheme(theme); toast('Settings saved!');
 };
-window.clearPin = async function() { if (!confirm('Remove PIN lock?')) return; await window.api.setStore('pinHash',''); document.getElementById('pin-status').textContent='✓ PIN removed.'; document.getElementById('pin-status').style.color='var(--success)'; };
+
+window.clearPin = async function() {
+  if (!confirm('Remove PIN lock?')) return;
+  try {
+    await window.api.clearPin();
+    document.getElementById('pin-status').textContent='✓ PIN removed.';
+    document.getElementById('pin-status').style.color='var(--success)';
+  } catch (err) {
+    toast('Failed to clear PIN');
+  }
+};
 
 // ===== PAGE PREVIEW MODAL =====
 let previewIdx = 0;
@@ -633,13 +733,16 @@ window.openPreview = function(idx) { previewIdx=idx; showPreview(); document.get
 window.closePreview = function() { document.getElementById('preview-modal').style.display='none'; };
 window.shiftPreview = function(dir) { const pages=activePdf()?.pages||[]; previewIdx=Math.max(0,Math.min(pages.length-1,previewIdx+dir)); showPreview(); };
 function showPreview() {
-  const pages=activePdf()?.pages||[]; const p=pages[previewIdx]; if (!p) return;
+  const pages=activePdf()?.pages||[];
+  const p=pages[previewIdx];
+  if (!p) return;
   document.getElementById('preview-img').src=p.full||p.thumb;
   const isColor=effectiveColor(p);
-  document.getElementById('preview-label').innerHTML=`Page ${p.num} of ${pages.length} &nbsp;·&nbsp; <span class="badge ${isColor?'badge-color':'badge-bw'}" style="font-size:12px;">${isColor?'🎨 Color':'⬛ B&W'}</span> &nbsp;·&nbsp; ${sizeName(p.sizeKey)}`;
+  document.getElementById('preview-label').innerHTML=`Page ${p.num} of ${pages.length} &nbsp;·&nbsp; <span class="badge ${isColor?'badge-color':'badge-bw'}" style="font-size:12px;">${isColor?'🎨 Color':'⬛ B&W'}</span>`;
   document.getElementById('prev-pg').disabled=previewIdx===0;
   document.getElementById('next-pg').disabled=previewIdx===pages.length-1;
 }
+
 document.addEventListener('keydown', e => {
   if (document.getElementById('preview-modal').style.display==='flex') {
     if (e.key==='ArrowLeft') shiftPreview(-1);
@@ -650,7 +753,7 @@ document.addEventListener('keydown', e => {
     if (e.key==='Escape') closePrintPreview();
     if (e.key==='ArrowLeft') ppPrevPage();
     if (e.key==='ArrowRight') ppNextPage();
-    if (e.key==='+' || e.key==='=') ppZoom(0.15);
+    if (e.key==='+'||e.key==='=') ppZoom(0.15);
     if (e.key==='-') ppZoom(-0.15);
     if (e.key==='0') ppResetZoom();
   }
