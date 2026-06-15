@@ -19,12 +19,69 @@ function validateString(str, maxLen = 256) {
 // pdfjsLib loaded via bootstrap in index.html
 const pdfjsLib = window.pdfjsLib;
 
+// ===== PAPER SIZES DATABASE =====
+const PAPER_SIZES = {
+  // US Standard
+  letter: { w: 8.5, h: 11, name: 'Letter (8.5 × 11")' },
+  legal: { w: 8.5, h: 14, name: 'Legal (8.5 × 14")' },
+  tabloid: { w: 11, h: 17, name: 'Tabloid (11 × 17")' },
+  ledger: { w: 17, h: 11, name: 'Ledger (17 × 11")' },
+  custom_85x13: { w: 8.5, h: 13, name: '8.5 × 13"' },
+  
+  // ISO A Series
+  a0: { w: 33.1, h: 46.8, name: 'A0 (33.1 × 46.8")' },
+  a1: { w: 23.4, h: 33.1, name: 'A1 (23.4 × 33.1")' },
+  a2: { w: 16.5, h: 23.4, name: 'A2 (16.5 × 23.4")' },
+  a3: { w: 11.7, h: 16.5, name: 'A3 (11.7 × 16.5")' },
+  a4: { w: 8.27, h: 11.69, name: 'A4 (8.27 × 11.69")' },
+  a5: { w: 5.83, h: 8.27, name: 'A5 (5.83 × 8.27")' },
+  a6: { w: 4.13, h: 5.83, name: 'A6 (4.13 × 5.83")' },
+  
+  // ISO B Series
+  b4: { w: 9.84, h: 13.9, name: 'B4 (9.84 × 13.9")' },
+  b5: { w: 6.93, h: 9.84, name: 'B5 (6.93 × 9.84")' },
+  
+  // ISO C Series
+  c5: { w: 6.38, h: 9.02, name: 'C5 (6.38 × 9.02")' },
+  
+  // Other
+  halfletter: { w: 5.5, h: 8.5, name: 'Half Letter (5.5 × 8.5")' },
+  gov: { w: 8, h: 10.5, name: 'Government Letter (8 × 10.5")' },
+};
+
+function getPaperSizeKey(widthIn, heightIn) {
+  const tolerance = 0.15; // inch tolerance
+  let closest = null;
+  let minDist = Infinity;
+  
+  for (const [key, size] of Object.entries(PAPER_SIZES)) {
+    // Check both orientations
+    const dist1 = Math.abs(widthIn - size.w) + Math.abs(heightIn - size.h);
+    const dist2 = Math.abs(widthIn - size.h) + Math.abs(heightIn - size.w);
+    const dist = Math.min(dist1, dist2);
+    
+    if (dist < tolerance && dist < minDist) {
+      minDist = dist;
+      closest = key;
+    }
+  }
+  return closest || 'letter';
+}
+
+function sizeName(k) { 
+  return PAPER_SIZES[k]?.name || PAPER_SIZES.letter.name; 
+}
+
 // ===== STATE =====
 let state = {
   pdfs: [],
   activePdfId: null,
   copies: 1,
-  pricing: { bw: { letter:3, legal:4, a3:6, a4:3 }, color: { letter:15, legal:20, a3:30, a4:15 }, defaultSize:'letter' },
+  pricing: { 
+    bw: { letter:3, legal:4, a3:6, a4:3, tabloid:8, custom_85x13:3.5 },
+    color: { letter:15, legal:20, a3:30, a4:15, tabloid:40, custom_85x13:17.5 },
+    defaultSize:'letter'
+  },
   settings: {},
   currency: '₱'
 };
@@ -212,30 +269,39 @@ async function processPdf({ buffer, name, size, fileId }) {
       const page = await pdf.getPage(p);
       const rawVp = page.getViewport({ scale: 1 });
       const widthPt = rawVp.width, heightPt = rawVp.height;
-      const sizeKey = detectSize(widthPt, heightPt);
+      const widthIn = widthPt / 72, heightIn = heightPt / 72;
+      const sizeKey = getPaperSizeKey(widthIn, heightIn);
+      
       // Color detection at 0.8x
       const vp = page.getViewport({ scale: 0.8 });
       canvas.width = vp.width; canvas.height = vp.height;
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
       const colored = detectColor(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      
       // Thumbnail at 0.35x
       const tVp = page.getViewport({ scale: 0.35 });
       const tc = document.createElement('canvas'); tc.width = tVp.width; tc.height = tVp.height;
       await page.render({ canvasContext: tc.getContext('2d'), viewport: tVp }).promise;
       const thumb = tc.toDataURL('image/jpeg', 0.85);
+      
       // Preview at 1.5x
       const fVp = page.getViewport({ scale: 1.5 });
       const fc = document.createElement('canvas'); fc.width = fVp.width; fc.height = fVp.height;
       await page.render({ canvasContext: fc.getContext('2d'), viewport: fVp }).promise;
       const full = fc.toDataURL('image/jpeg', 0.92);
+      
       // Print at 3x PNG
       const pVp = page.getViewport({ scale: 3 });
       const pc = document.createElement('canvas'); pc.width = pVp.width; pc.height = pVp.height;
       await page.render({ canvasContext: pc.getContext('2d'), viewport: pVp }).promise;
       const printImg = pc.toDataURL('image/png');
+      
       const cost = getPageCost(colored, sizeKey);
-      pages.push({ num: p, colored, colorOverride: null, included: true, sizeKey, cost, thumb, full, printImg, widthPt, heightPt });
-      setProgress(15 + Math.round((p/total)*82), `Page ${p} of ${total} — ${colored?'🎨 Color':'⬛ B&W'}`);
+      pages.push({ 
+        num: p, colored, colorOverride: null, included: true, sizeKey, cost, thumb, full, printImg, 
+        widthPt, heightPt, widthIn, heightIn 
+      });
+      setProgress(15 + Math.round((p/total)*82), `Page ${p} of ${total} — ${colored?'🎨 Color':'⬛ B&W'} (${widthIn.toFixed(1)}" × ${heightIn.toFixed(1)}")`);
     }
     setProgress(100, 'Done!');
     let pdfBuffer = buffer;
@@ -285,17 +351,6 @@ function detectColor(imgData) {
   return total > 0 && (colorPx/total) > ratioThreshold;
 }
 
-// ===== SIZE DETECTION =====
-function detectSize(wPt, hPt) {
-  const wi = wPt/72, hi = hPt/72;
-  const shortIn = Math.min(wi,hi), longIn = Math.max(wi,hi);
-  if (longIn >= 16.4) return 'a3';
-  if (longIn >= 13.4 && shortIn >= 8.0) return 'legal';
-  const longSide = Math.max(wPt/72, hPt/72);
-  if (longSide > 11.35) return 'a4';
-  return 'letter';
-}
-function sizeName(k) { return { letter:'Letter', legal:'Legal', a3:'A3', a4:'A4' }[k] || 'Letter'; }
 function effectiveColor(p) { return p.colorOverride !== null ? p.colorOverride : p.colored; }
 function getPageCost(colored, sizeKey) { const src = colored ? state.pricing.color : state.pricing.bw; return src[sizeKey] ?? src.letter ?? 0; }
 
@@ -352,6 +407,7 @@ function renderTable() {
     const isColor = effectiveColor(p);
     const isOverridden = p.colorOverride !== null;
     const excluded = !p.included;
+    const sizeDisplay = `${p.widthIn.toFixed(2)}" × ${p.heightIn.toFixed(2)}"`;
     return `<tr class="${excluded?'row-excluded':''}">
       <td style="color:var(--text-secondary);font-size:12px;">${p.num}</td>
       <td><div class="thumb-cell" onclick="openPreview(${i})" title="Click to preview"><img src="${p.thumb}" alt="p${p.num}" style="${excluded?'opacity:0.35':''}"><div class="thumb-overlay">🔍</div></div></td>
@@ -367,13 +423,10 @@ function renderTable() {
           ${isOverridden?`<button class="color-ovr-btn reset-btn" onclick="setColorOverride(${i},null)">Auto</button>`:''}
         </div>
       </td>
-      <td style="${excluded?'opacity:0.4':''}"><span class="badge badge-size">${sizeName(p.sizeKey)}</span></td>
+      <td style="${excluded?'opacity:0.4':''}"><span class="badge badge-size" title="${sizeName(p.sizeKey)}">${sizeDisplay}</span></td>
       <td style="${excluded?'opacity:0.4':''}">
         <select class="size-sel" onchange="overrideSize(${i},this.value)" ${excluded?'disabled':''}>
-          <option value="letter" ${p.sizeKey==='letter'?'selected':''}>Letter</option>
-          <option value="a4" ${p.sizeKey==='a4'?'selected':''}>A4</option>
-          <option value="legal" ${p.sizeKey==='legal'?'selected':''}>Legal</option>
-          <option value="a3" ${p.sizeKey==='a3'?'selected':''}>A3</option>
+          ${Object.entries(PAPER_SIZES).map(([k,v]) => `<option value="${k}" ${p.sizeKey===k?'selected':''}>${v.name}</option>`).join('')}
         </select>
       </td>
       <td style="color:var(--text-secondary);font-size:12px;${excluded?'opacity:0.4':''}">$${getPageCost(isColor,p.sizeKey).toFixed(2)}/pg</td>
@@ -397,7 +450,7 @@ function updateTotalBar() {
 }
 
 window.toggleInclude = function(idx, val) { const pdf = activePdf(); if (!pdf) return; pdf.pages[idx].included = val; renderTable(); renderMetrics(); updateTotalBar(); };
-window.overrideSize = function(idx, newSize) { const pdf = activePdf(); if (!pdf) return; if (['letter','legal','a3','a4'].includes(newSize)) { pdf.pages[idx].sizeKey = newSize; pdf.pages[idx].cost = getPageCost(effectiveColor(pdf.pages[idx]), newSize); renderTable(); updateTotalBar(); } };
+window.overrideSize = function(idx, newSize) { const pdf = activePdf(); if (!pdf) return; if (PAPER_SIZES[newSize]) { pdf.pages[idx].sizeKey = newSize; pdf.pages[idx].cost = getPageCost(effectiveColor(pdf.pages[idx]), newSize); renderTable(); updateTotalBar(); } };
 window.setColorOverride = function(idx, val) { const pdf = activePdf(); if (!pdf) return; pdf.pages[idx].colorOverride = val; pdf.pages[idx].cost = getPageCost(effectiveColor(pdf.pages[idx]), pdf.pages[idx].sizeKey); renderTable(); updateTotalBar(); };
 window.recalcCopies = function() { state.copies = validateNumber(document.getElementById('copies-input').value, 1, 999); renderMetrics(); updateTotalBar(); };
 window.resetScan = function() {
@@ -476,7 +529,7 @@ function ppRenderCurrentPage() {
 
   const isColor = effectiveColor(pg);
   document.getElementById('pp-info-strip').innerHTML =
-    `Page ${pg.num} &nbsp;·&nbsp; ${sizeName(pg.sizeKey)} &nbsp;·&nbsp;
+    `Page ${pg.num} &nbsp;·&nbsp; ${sizeName(pg.sizeKey)} (${pg.widthIn.toFixed(2)}" × ${pg.heightIn.toFixed(2)}") &nbsp;·&nbsp;
      <span class="badge ${isColor?'badge-color':'badge-bw'}" style="font-size:10px;">${isColor?'🎨 Color':'⬛ B&W'}</span>
      ${rot ? `&nbsp;·&nbsp; Rotated ${rot}°` : ''}`;
 }
@@ -542,7 +595,7 @@ window.confirmPrint = async function() {
   const printData = {
     pages: ppState.pages.map((pg, i) => ({
       dataUrl: pg.printImg,
-      widthPt: pg.widthPt,
+      widthPt: pg.widthPt,  // Use actual PDF dimensions, NOT paper size
       heightPt: pg.heightPt,
       num: pg.num,
       colored: effectiveColor(pg),
@@ -643,9 +696,13 @@ function populateSettings(s) {
   document.getElementById('p-bw-letter').value = validateNumber(p.bw?.letter, 0, 999) || 3;
   document.getElementById('p-bw-legal').value = validateNumber(p.bw?.legal, 0, 999) || 4;
   document.getElementById('p-bw-a3').value = validateNumber(p.bw?.a3, 0, 999) || 6;
+  document.getElementById('p-bw-tabloid').value = validateNumber(p.bw?.tabloid, 0, 999) || 8;
+  document.getElementById('p-bw-custom85x13').value = validateNumber(p.bw?.custom_85x13, 0, 999) || 3.5;
   document.getElementById('p-color-letter').value = validateNumber(p.color?.letter, 0, 999) || 15;
   document.getElementById('p-color-legal').value = validateNumber(p.color?.legal, 0, 999) || 20;
   document.getElementById('p-color-a3').value = validateNumber(p.color?.a3, 0, 999) || 30;
+  document.getElementById('p-color-tabloid').value = validateNumber(p.color?.tabloid, 0, 999) || 40;
+  document.getElementById('p-color-custom85x13').value = validateNumber(p.color?.custom_85x13, 0, 999) || 17.5;
   document.getElementById('s-default-size').value = p.defaultSize||'letter';
   document.getElementById('s-show-tax').checked = !!s.showTax;
   document.getElementById('tax-row').style.display = s.showTax?'flex':'none';
@@ -654,7 +711,7 @@ function populateSettings(s) {
   document.getElementById('s-dark').checked = s.theme==='dark';
   updateCurrencySymbols(validateString(s.currency||'₱', 5));
 }
-function updateCurrencySymbols(sym) { for (let i=1;i<=6;i++) { const el=document.getElementById('cs'+i); if(el) el.textContent=escapeHtml(sym); } }
+function updateCurrencySymbols(sym) { for (let i=1;i<=10;i++) { const el=document.getElementById('cs'+i); if(el) el.textContent=escapeHtml(sym); } }
 
 window.saveSettings = async function() {
   try {
@@ -677,12 +734,16 @@ window.saveSettings = async function() {
       bw:{
         letter:validateNumber(document.getElementById('p-bw-letter').value, 0, 999),
         legal:validateNumber(document.getElementById('p-bw-legal').value, 0, 999),
-        a3:validateNumber(document.getElementById('p-bw-a3').value, 0, 999)
+        a3:validateNumber(document.getElementById('p-bw-a3').value, 0, 999),
+        tabloid:validateNumber(document.getElementById('p-bw-tabloid').value, 0, 999),
+        custom_85x13:validateNumber(document.getElementById('p-bw-custom85x13').value, 0, 999)
       },
       color:{
         letter:validateNumber(document.getElementById('p-color-letter').value, 0, 999),
         legal:validateNumber(document.getElementById('p-color-legal').value, 0, 999),
-        a3:validateNumber(document.getElementById('p-color-a3').value, 0, 999)
+        a3:validateNumber(document.getElementById('p-color-a3').value, 0, 999),
+        tabloid:validateNumber(document.getElementById('p-color-tabloid').value, 0, 999),
+        custom_85x13:validateNumber(document.getElementById('p-color-custom85x13').value, 0, 999)
       }
     };
     const bizName=validateString(document.getElementById('s-biz-name').value, 100);
