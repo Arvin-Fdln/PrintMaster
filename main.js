@@ -2,11 +2,10 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme } = requir
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
-const bcrypt = require('bcrypt');
+const argon2 = require('argon2');
 
 const store = new Store({ encryptionKey: 'printmaster-secure-2024', name: 'config' });
 let mainWindow, loginWindow, splashWindow;
-const SALT_ROUNDS = 10;
 
 // ===== UTILITIES =====
 function validateNumber(val, min = 0, max = 999) {
@@ -217,13 +216,14 @@ ipcMain.handle('print-pdf', async (_, printData) => {
 });
 
 // ===== PIN MANAGEMENT (SECURE) =====
-ipcMain.handle('verify-pin', async (_, inputHash) => {
+ipcMain.handle('verify-pin', async (_, inputPin) => {
   try {
+    if (typeof inputPin !== 'string' || !/^\d{4}$/.test(inputPin)) return false;
     const stored = store.get('pinHash', '');
     if (!stored) return true; // No PIN set
     
-    // Compare with bcrypt
-    const isValid = await bcrypt.compare(inputHash, stored);
+    // Compare with argon2
+    const isValid = await argon2.verify(stored, inputPin);
     return isValid;
   } catch (err) {
     console.error('PIN verification error:', err);
@@ -238,7 +238,7 @@ ipcMain.handle('set-pin', async (_, pin) => {
     if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) {
       return { ok: false, error: 'PIN must be 4 digits' };
     }
-    const hash = await bcrypt.hash(pin, SALT_ROUNDS);
+    const hash = await argon2.hash(pin);
     store.set('pinHash', hash);
     return { ok: true };
   } catch (err) {
