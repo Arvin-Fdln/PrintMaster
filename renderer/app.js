@@ -472,7 +472,10 @@ let ppState = {
   zoom: 1.0,
   rotations: [],
   scale: 100,
-  orientation: 'portrait'
+  orientation: 'portrait',
+  duplex: 'none',
+  printerName: '__default__',
+  zoomMode: 'fit' // 'fit', 'fitWidth', or 'custom'
 };
 
 window.printPdf = async function() {
@@ -486,6 +489,7 @@ window.printPdf = async function() {
   ppState.rotations = includedPages.map(() => 0);
   ppState.scale = 100;
   ppState.orientation = 'portrait';
+  ppState.zoomMode = 'fit';
 
   document.getElementById('pp-filename').textContent = escapeHtml(pdf.fileName);
   document.getElementById('pp-page-count-info').textContent = `${includedPages.length} page${includedPages.length!==1?'s':''}`;
@@ -501,6 +505,11 @@ window.printPdf = async function() {
   sel.innerHTML = printers.length
     ? printers.map(p => `<option value="${escapeHtml(p.name)}" ${p.isDefault?'selected':''}>${escapeHtml(p.name)}${p.isDefault?' (Default)':''}</option>`).join('')
     : '<option value="__default__">Default Printer</option>';
+
+  const duplexSel = document.getElementById('pp-duplex');
+  duplexSel.value = 'none';
+  ppState.duplex = 'none';
+  ppState.printerName = sel.value;
 
   ppRenderCurrentPage();
   document.getElementById('print-preview-modal').style.display = 'flex';
@@ -518,14 +527,30 @@ function ppRenderCurrentPage() {
   img.style.transform = rot ? `rotate(${rot}deg)` : '';
 
   const container = document.getElementById('pp-page-container');
-  container.style.transform = `scale(${ppState.zoom})`;
+  const vp = document.getElementById('pp-viewport');
+  
+  // Apply zoom mode
+  let effectiveZoom = ppState.zoom;
+  if (ppState.zoomMode === 'fit') {
+    const vpWidth = vp.clientWidth - 40; // padding
+    const vpHeight = vp.clientHeight - 40;
+    const imgAspect = img.naturalWidth / img.naturalHeight || 1;
+    const fitWidth = vpWidth / (img.naturalWidth || 1);
+    const fitHeight = vpHeight / (img.naturalHeight || 1);
+    effectiveZoom = Math.min(fitWidth, fitHeight, 1.5);
+  } else if (ppState.zoomMode === 'fitWidth') {
+    const vpWidth = vp.clientWidth - 40;
+    effectiveZoom = vpWidth / (img.naturalWidth || 1);
+  }
+  
+  container.style.transform = `scale(${effectiveZoom})`;
   container.style.transformOrigin = 'center top';
 
   document.getElementById('pp-page-counter').textContent = `${idx+1} / ${pages.length}`;
   document.getElementById('pp-prev-btn').disabled = idx === 0;
   document.getElementById('pp-next-btn').disabled = idx === pages.length - 1;
 
-  document.getElementById('pp-zoom-label').textContent = Math.round(ppState.zoom * 100) + '%';
+  document.getElementById('pp-zoom-label').textContent = Math.round(effectiveZoom * 100) + '%';
 
   const isColor = effectiveColor(pg);
   document.getElementById('pp-info-strip').innerHTML =
@@ -542,10 +567,17 @@ window.ppNextPage = function() {
 };
 
 window.ppZoom = function(delta) {
+  ppState.zoomMode = 'custom';
   ppState.zoom = Math.min(3.0, Math.max(0.3, ppState.zoom + delta));
   ppRenderCurrentPage();
 };
-window.ppResetZoom = function() { ppState.zoom = 1.0; ppRenderCurrentPage(); };
+
+window.ppZoomMode = function(mode) {
+  if (!['fit', 'fitWidth', 'custom'].includes(mode)) return;
+  ppState.zoomMode = mode;
+  if (mode === 'custom') ppState.zoom = 1.0;
+  ppRenderCurrentPage();
+};
 
 window.ppRotate = function(deg) {
   const idx = ppState.currentIdx;
@@ -570,6 +602,15 @@ window.ppSetOrientation = function(ori) {
   document.getElementById('pp-orient-land').classList.toggle('active', ori === 'landscape');
 };
 
+window.ppSetPrinter = function(name) {
+  ppState.printerName = name || '__default__';
+};
+
+window.ppSetDuplex = function(mode) {
+  if (!['none', 'long', 'short'].includes(mode)) mode = 'none';
+  ppState.duplex = mode;
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   const vp = document.getElementById('pp-viewport');
   if (vp) {
@@ -582,9 +623,34 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-window.closePrintPreview = function() {
-  document.getElementById('print-preview-modal').style.display = 'none';
-  pendingPrintData = null;
+window.openPrintPreferences = async function() {
+  const printData = {
+    pages: ppState.pages.map((pg, i) => ({
+      dataUrl: pg.printImg,
+      widthPt: pg.widthPt,
+      heightPt: pg.heightPt,
+      num: pg.num,
+      colored: effectiveColor(pg),
+      rotation: ppState.rotations[i] || 0
+    })),
+    printerName: ppState.printerName,
+    duplex: ppState.duplex,
+    scale: ppState.scale,
+    landscape: ppState.orientation === 'landscape'
+  };
+  
+  try {
+    const result = await window.api.printPdf(printData);
+    if (result?.ok) {
+      toast('Print job sent!');
+      closePrintPreview();
+    } else if (result?.error && result.error !== 'Cancelled') {
+      toast('Print error: ' + result.error);
+    }
+    // If cancelled, user just returns to preview
+  } catch (err) {
+    toast('Print failed: ' + err.message);
+  }
 };
 
 window.confirmPrint = async function() {
@@ -595,16 +661,17 @@ window.confirmPrint = async function() {
   const printData = {
     pages: ppState.pages.map((pg, i) => ({
       dataUrl: pg.printImg,
-      widthPt: pg.widthPt,  // Use actual PDF dimensions, NOT paper size
+      widthPt: pg.widthPt,
       heightPt: pg.heightPt,
       num: pg.num,
       colored: effectiveColor(pg),
       rotation: ppState.rotations[i] || 0
     })),
-    printerName: document.getElementById('pp-printer').value,
-    duplex: document.getElementById('pp-duplex').value,
+    printerName: ppState.printerName,
+    duplex: ppState.duplex,
     scale: ppState.scale,
-    landscape: ppState.orientation === 'landscape'
+    landscape: ppState.orientation === 'landscape',
+    silent: true // Key: silent print, no native dialog
   };
 
   try {
@@ -620,6 +687,11 @@ window.confirmPrint = async function() {
     btn.disabled = false;
     toast('Print failed: ' + err.message);
   }
+};
+
+window.closePrintPreview = function() {
+  document.getElementById('print-preview-modal').style.display = 'none';
+  pendingPrintData = null;
 };
 
 // ===== QUOTE =====
@@ -816,7 +888,7 @@ document.addEventListener('keydown', e => {
     if (e.key==='ArrowRight') ppNextPage();
     if (e.key==='+'||e.key==='=') ppZoom(0.15);
     if (e.key==='-') ppZoom(-0.15);
-    if (e.key==='0') ppResetZoom();
+    if (e.key==='0') ppZoomMode('fit');
   }
 });
 

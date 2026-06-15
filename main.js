@@ -136,7 +136,7 @@ ipcMain.handle('print-pdf', async (_, printData) => {
   try {
     if (!mainWindow) return { ok: false, error: 'Window unavailable' };
     
-    const { pages, printerName, duplex, scale, landscape } = printData;
+    const { pages, printerName, duplex, scale, landscape, silent } = printData;
     if (!pages || !Array.isArray(pages) || pages.length === 0) {
       return { ok: false, error: 'No pages to print' };
     }
@@ -144,6 +144,7 @@ ipcMain.handle('print-pdf', async (_, printData) => {
     const scaleVal = validateNumber(scale, 50, 150);
     const landscapeVal = !!landscape;
     const duplexVal = ['long', 'short', 'none'].includes(duplex) ? duplex : 'none';
+    const silentVal = !!silent; // New parameter
 
     const pageDivs = pages.map(pg => {
       if (!pg.dataUrl || !pg.widthPt || !pg.heightPt) return '';
@@ -176,7 +177,7 @@ ipcMain.handle('print-pdf', async (_, printData) => {
     const hMicrons = Math.round((firstPage.heightPt / 72) * 25400);
 
     const printOptions = {
-      silent: false,
+      silent: silentVal, // Use silent flag from printData
       printBackground: true,
       color: true,
       pageSize: { width: wMicrons, height: hMicrons },
