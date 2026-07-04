@@ -14,7 +14,7 @@
   "dependencies": {
     "argon2": "^0.31.2",
     "electron-store": "^8.2.0",
-    "pdfjs-dist": "^4.4.168"
+    "pdfjs-dist": "^4.10.38"
   },
   "devDependencies": {
     "electron": "^31.0.0",
@@ -24,7 +24,9 @@
     "appId": "com.printmaster.app",
     "productName": "PrintMaster",
     "copyright": "Copyright © 2024 PrintMaster",
-    "directories": { "output": "dist" },
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "main.js",
       "preload.js",
@@ -33,7 +35,14 @@
       "node_modules/**/*"
     ],
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "assets/icon.ico"
     },
     "mac": {

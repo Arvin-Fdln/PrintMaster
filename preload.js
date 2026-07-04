@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('api', {
   getVersion: () => ipcRenderer.invoke('get-version'),
   getPrinters: () => ipcRenderer.invoke('get-printers'),
   openPdfDialog: () => ipcRenderer.invoke('open-pdf-dialog'),
+  analyzePdf: (fileData) => ipcRenderer.invoke('analyze-pdf', fileData), // NEW
   printPdf: (printData) => ipcRenderer.invoke('print-pdf', printData),
   verifyPin: (pin) => ipcRenderer.invoke('verify-pin', pin),
   hasPin: () => ipcRenderer.invoke('has-pin'),

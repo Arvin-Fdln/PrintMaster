@@ -21,14 +21,11 @@ const pdfjsLib = window.pdfjsLib;
 
 // ===== PAPER SIZES DATABASE =====
 const PAPER_SIZES = {
-  // US Standard
   letter: { w: 8.5, h: 11, name: 'Letter (8.5 × 11")' },
   legal: { w: 8.5, h: 14, name: 'Legal (8.5 × 14")' },
   tabloid: { w: 11, h: 17, name: 'Tabloid (11 × 17")' },
   ledger: { w: 17, h: 11, name: 'Ledger (17 × 11")' },
   custom_85x13: { w: 8.5, h: 13, name: '8.5 × 13"' },
-  
-  // ISO A Series
   a0: { w: 33.1, h: 46.8, name: 'A0 (33.1 × 46.8")' },
   a1: { w: 23.4, h: 33.1, name: 'A1 (23.4 × 33.1")' },
   a2: { w: 16.5, h: 23.4, name: 'A2 (16.5 × 23.4")' },
@@ -36,30 +33,22 @@ const PAPER_SIZES = {
   a4: { w: 8.27, h: 11.69, name: 'A4 (8.27 × 11.69")' },
   a5: { w: 5.83, h: 8.27, name: 'A5 (5.83 × 8.27")' },
   a6: { w: 4.13, h: 5.83, name: 'A6 (4.13 × 5.83")' },
-  
-  // ISO B Series
   b4: { w: 9.84, h: 13.9, name: 'B4 (9.84 × 13.9")' },
   b5: { w: 6.93, h: 9.84, name: 'B5 (6.93 × 9.84")' },
-  
-  // ISO C Series
   c5: { w: 6.38, h: 9.02, name: 'C5 (6.38 × 9.02")' },
-  
-  // Other
   halfletter: { w: 5.5, h: 8.5, name: 'Half Letter (5.5 × 8.5")' },
   gov: { w: 8, h: 10.5, name: 'Government Letter (8 × 10.5")' },
 };
 
 function getPaperSizeKey(widthIn, heightIn) {
-  const tolerance = 0.15; // inch tolerance
+  const tolerance = 0.15;
   let closest = null;
   let minDist = Infinity;
   
   for (const [key, size] of Object.entries(PAPER_SIZES)) {
-    // Check both orientations
     const dist1 = Math.abs(widthIn - size.w) + Math.abs(heightIn - size.h);
     const dist2 = Math.abs(widthIn - size.h) + Math.abs(heightIn - size.w);
     const dist = Math.min(dist1, dist2);
-    
     if (dist < tolerance && dist < minDist) {
       minDist = dist;
       closest = key;
@@ -146,10 +135,29 @@ async function checkPrinterStatus() {
       dot.className = 'status-dot offline';
       txt.textContent = 'No printers found';
     }
-  } catch(e) {
+  } catch (e) {
+    console.warn('Printer check error:', e);
     cachedPrinters = [];
-    document.getElementById('printer-status-dot').className = 'status-dot offline';
-    document.getElementById('printer-status-text').textContent = 'Offline';
+    const dot = document.getElementById('printer-status-dot');
+    const txt = document.getElementById('printer-status-text');
+    if (dot) dot.className = 'status-dot offline';
+    if (txt) txt.textContent = 'Offline';
+  }
+}
+
+async function loadDefaultPrinterList() {
+  try {
+    const printers = await window.api.getPrinters();
+    const sel = document.getElementById('s-default-printer');
+    if (!sel) return;
+    sel.innerHTML = '<option value="__default__">System Default</option>' +
+      printers.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('');
+    const stored = await window.api.getStore('defaultPrinter');
+    if (stored) {
+      sel.value = stored;
+    }
+  } catch (e) {
+    console.warn('Could not load printers for default setting', e);
   }
 }
 
@@ -179,14 +187,17 @@ async function init() {
 
     populateSettings(all);
     renderHistory();
-    checkPrinterStatus();
+    setTimeout(async () => {
+      checkPrinterStatus();
+      await loadDefaultPrinterList();
+    }, 500);
 
     document.getElementById('s-show-tax').addEventListener('change', function() {
       document.getElementById('tax-row').style.display = this.checked ? 'flex' : 'none';
     });
   } catch (err) {
     console.error('Init error:', err);
-    toast('Failed to initialize app');
+    toast('Failed to initialize app: ' + err.message);
   }
 }
 
@@ -249,6 +260,29 @@ window.openPdfDialog = async function() {
 };
 
 // ===== PROCESS PDF =====
+// Thumbnail cache for performance
+const thumbCache = new Map();
+const MAX_CACHE = 100;
+
+async function getThumbnail(page, scale = 0.35) {
+  const key = `${page._pageIndex}-${scale}`;
+  if (thumbCache.has(key)) return thumbCache.get(key);
+  
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  
+  thumbCache.set(key, dataUrl);
+  if (thumbCache.size > MAX_CACHE) {
+    const first = thumbCache.keys().next().value;
+    thumbCache.delete(first);
+  }
+  return dataUrl;
+}
+
 async function processPdf({ buffer, name, size, fileId }) {
   document.getElementById('drop-zone').style.display = 'none';
   document.getElementById('scan-results').style.display = 'none';
@@ -265,6 +299,7 @@ async function processPdf({ buffer, name, size, fileId }) {
     const canvas = document.getElementById('offscreen-canvas');
     const ctx = canvas.getContext('2d');
     const pages = [];
+    
     for (let p = 1; p <= total; p++) {
       const page = await pdf.getPage(p);
       const rawVp = page.getViewport({ scale: 1 });
@@ -272,34 +307,23 @@ async function processPdf({ buffer, name, size, fileId }) {
       const widthIn = widthPt / 72, heightIn = heightPt / 72;
       const sizeKey = getPaperSizeKey(widthIn, heightIn);
       
-      // Color detection at 0.8x
       const vp = page.getViewport({ scale: 0.8 });
       canvas.width = vp.width; canvas.height = vp.height;
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
       const colored = detectColor(ctx.getImageData(0, 0, canvas.width, canvas.height));
       
-      // Thumbnail at 0.35x
-      const tVp = page.getViewport({ scale: 0.35 });
-      const tc = document.createElement('canvas'); tc.width = tVp.width; tc.height = tVp.height;
-      await page.render({ canvasContext: tc.getContext('2d'), viewport: tVp }).promise;
-      const thumb = tc.toDataURL('image/jpeg', 0.85);
-      
-      // Preview at 1.5x
-      const fVp = page.getViewport({ scale: 1.5 });
-      const fc = document.createElement('canvas'); fc.width = fVp.width; fc.height = fVp.height;
-      await page.render({ canvasContext: fc.getContext('2d'), viewport: fVp }).promise;
-      const full = fc.toDataURL('image/jpeg', 0.92);
-      
-      // Print at 3x PNG
-      const pVp = page.getViewport({ scale: 3 });
-      const pc = document.createElement('canvas'); pc.width = pVp.width; pc.height = pVp.height;
-      await page.render({ canvasContext: pc.getContext('2d'), viewport: pVp }).promise;
-      const printImg = pc.toDataURL('image/png');
+      const thumbFn = () => getThumbnail(page, 0.35);
+      const fullFn = () => getThumbnail(page, 1.5);
+      const printFn = () => getThumbnail(page, 3.0);
       
       const cost = getPageCost(colored, sizeKey);
       pages.push({ 
-        num: p, colored, colorOverride: null, included: true, sizeKey, cost, thumb, full, printImg, 
-        widthPt, heightPt, widthIn, heightIn 
+        num: p, colored, colorOverride: null, included: true, sizeKey, cost,
+        widthPt, heightPt, widthIn, heightIn,
+        _thumbFn: thumbFn,
+        _fullFn: fullFn,
+        _printFn: printFn,
+        thumb: null, full: null, printImg: null,
       });
       setProgress(15 + Math.round((p/total)*82), `Page ${p} of ${total} — ${colored?'🎨 Color':'⬛ B&W'} (${widthIn.toFixed(1)}" × ${heightIn.toFixed(1)}")`);
     }
@@ -310,7 +334,6 @@ async function processPdf({ buffer, name, size, fileId }) {
     state.pdfs.push({ id: pdfId, fileName: validateString(name, 256), fileSize: size, fileId: fileId||null, pdfBuffer, pages });
     state.activePdfId = pdfId;
     
-    // Cleanup old buffers if too many PDFs
     if (state.pdfs.length > 5) {
       const oldPdf = state.pdfs.shift();
       if (oldPdf) oldPdf.pdfBuffer = null;
@@ -320,7 +343,7 @@ async function processPdf({ buffer, name, size, fileId }) {
   } catch (err) {
     console.error('PDF processing error:', err);
     setProgress(0, 'Error: ' + err.message);
-    resetScan(); // Cleanup on error
+    resetScan();
     toast('Failed to read PDF: ' + err.message);
   }
 }
@@ -330,22 +353,25 @@ function setProgress(pct, msg) {
   document.getElementById('prog-label').textContent = msg;
 }
 
-// ===== COLOR DETECTION =====
+// ===== IMPROVED COLOR DETECTION =====
 function detectColor(imgData) {
   const d = imgData.data;
   let colorPx = 0, total = 0;
-  const step = 8;
+  const step = 4;
   const sens = validateNumber(state.settings.colorSensitivity || 5, 1, 10);
-  const satThreshold = 0.14 - (sens * 0.01);
-  const ratioThreshold = 0.025 - (sens * 0.002);
+  const satThreshold = 0.08 - (sens * 0.004);
+  const ratioThreshold = 0.008 - (sens * 0.0006);
+  
   for (let i = 0; i < d.length; i += 4 * step) {
     const r = d[i], g = d[i+1], b = d[i+2], a = d[i+3];
     if (a < 30) continue;
-    if (r > 230 && g > 230 && b > 230) continue;
-    if (r < 40 && g < 40 && b < 40) continue;
+    const brightness = (r + g + b) / 3;
+    if (brightness > 240 || brightness < 15) continue;
+    const grayDev = Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b);
+    if (grayDev < 20) continue;
     const max = Math.max(r,g,b), min = Math.min(r,g,b);
     const sat = max === 0 ? 0 : (max-min)/max;
-    if (sat > satThreshold && max > 20) colorPx++;
+    if (sat > satThreshold) colorPx++;
     total++;
   }
   return total > 0 && (colorPx/total) > ratioThreshold;
@@ -378,7 +404,7 @@ window.switchPdfTab = function(id) { state.activePdfId = id; renderPdfTabs(); re
 window.removePdf = function(id, e) {
   e.stopPropagation();
   const pdf = state.pdfs.find(p => p.id === id);
-  if (pdf) pdf.pdfBuffer = null; // Cleanup
+  if (pdf) pdf.pdfBuffer = null;
   state.pdfs = state.pdfs.filter(p => p.id !== id);
   if (!state.pdfs.length) { resetScan(); return; }
   if (state.activePdfId === id) state.activePdfId = state.pdfs[0].id;
@@ -403,14 +429,20 @@ function renderMetrics() {
 function renderTable() {
   const cur = state.currency;
   const pdf = activePdf(); if (!pdf) return;
-  document.getElementById('page-tbody').innerHTML = pdf.pages.map((p, i) => {
+  
+  const rows = pdf.pages.map(async (p, i) => {
+    let thumb = p.thumb;
+    if (!thumb) {
+      thumb = await p._thumbFn();
+      p.thumb = thumb;
+    }
     const isColor = effectiveColor(p);
     const isOverridden = p.colorOverride !== null;
     const excluded = !p.included;
     const sizeDisplay = `${p.widthIn.toFixed(2)}" × ${p.heightIn.toFixed(2)}"`;
     return `<tr class="${excluded?'row-excluded':''}">
       <td style="color:var(--text-secondary);font-size:12px;">${p.num}</td>
-      <td><div class="thumb-cell" onclick="openPreview(${i})" title="Click to preview"><img src="${p.thumb}" alt="p${p.num}" style="${excluded?'opacity:0.35':''}"><div class="thumb-overlay">🔍</div></div></td>
+      <td><div class="thumb-cell" onclick="openPreview(${i})" title="Click to preview"><img src="${thumb}" alt="p${p.num}" style="${excluded?'opacity:0.35':''}"><div class="thumb-overlay">🔍</div></div></td>
       <td><label class="include-toggle"><input type="checkbox" ${p.included?'checked':''} onchange="toggleInclude(${i},this.checked)"><span class="include-slider"></span></label></td>
       <td>
         <div style="display:flex;align-items:center;gap:6px;${excluded?'opacity:0.4':''}">
@@ -432,7 +464,11 @@ function renderTable() {
       <td style="color:var(--text-secondary);font-size:12px;${excluded?'opacity:0.4':''}">$${getPageCost(isColor,p.sizeKey).toFixed(2)}/pg</td>
       <td style="text-align:right;font-weight:500;${excluded?'opacity:0.4;text-decoration:line-through':''}">$${excluded?'—':cur+p.cost.toFixed(2)}</td>
     </tr>`;
-  }).join('');
+  });
+  
+  Promise.all(rows).then(html => {
+    document.getElementById('page-tbody').innerHTML = html.join('');
+  });
 }
 
 function updateTotalBar() {
@@ -462,6 +498,7 @@ window.resetScan = function() {
   document.getElementById('scan-results').style.display = 'none';
   document.getElementById('add-pdf-btn').style.display = 'none';
   document.getElementById('open-btn').style.display = 'inline-flex';
+  thumbCache.clear();
 };
 
 // ===== PRINT PREVIEW =====
@@ -475,13 +512,19 @@ let ppState = {
   orientation: 'portrait',
   duplex: 'none',
   printerName: '__default__',
-  zoomMode: 'fit' // 'fit', 'fitWidth', or 'custom'
+  zoomMode: 'fit'
 };
 
 window.printPdf = async function() {
   const pdf = activePdf(); if (!pdf) { toast('No PDF loaded.'); return; }
   const includedPages = pdf.pages.filter(p => p.included);
   if (!includedPages.length) { toast('No pages selected for printing.'); return; }
+
+  for (const p of includedPages) {
+    if (!p.printImg) {
+      p.printImg = await p._printFn();
+    }
+  }
 
   ppState.pages = includedPages;
   ppState.currentIdx = 0;
@@ -506,10 +549,28 @@ window.printPdf = async function() {
     ? printers.map(p => `<option value="${escapeHtml(p.name)}" ${p.isDefault?'selected':''}>${escapeHtml(p.name)}${p.isDefault?' (Default)':''}</option>`).join('')
     : '<option value="__default__">Default Printer</option>';
 
+  // Set initial printer from stored default
+  const storedDefault = await window.api.getStore('defaultPrinter');
+  if (storedDefault && storedDefault !== '__default__') {
+    const optionExists = Array.from(sel.options).some(opt => opt.value === storedDefault);
+    if (optionExists) {
+      sel.value = storedDefault;
+    }
+  }
+  ppState.printerName = sel.value;
+
+  sel.onchange = function() {
+    ppState.printerName = this.value;
+  };
+
   const duplexSel = document.getElementById('pp-duplex');
   duplexSel.value = 'none';
   ppState.duplex = 'none';
-  ppState.printerName = sel.value;
+
+  // Reset print button
+  const btn = document.getElementById('pp-print-btn');
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Print Now`;
+  btn.disabled = false;
 
   ppRenderCurrentPage();
   document.getElementById('print-preview-modal').style.display = 'flex';
@@ -523,40 +584,54 @@ function ppRenderCurrentPage() {
   const rot = ppState.rotations[idx];
 
   const img = document.getElementById('pp-current-img');
-  img.src = pg.full || pg.thumb;
-  img.style.transform = rot ? `rotate(${rot}deg)` : '';
+  img.src = pg.printImg || pg.full || pg.thumb;
 
-  const container = document.getElementById('pp-page-container');
-  const vp = document.getElementById('pp-viewport');
-  
-  // Apply zoom mode
-  let effectiveZoom = ppState.zoom;
-  if (ppState.zoomMode === 'fit') {
-    const vpWidth = vp.clientWidth - 40; // padding
-    const vpHeight = vp.clientHeight - 40;
-    const imgAspect = img.naturalWidth / img.naturalHeight || 1;
-    const fitWidth = vpWidth / (img.naturalWidth || 1);
-    const fitHeight = vpHeight / (img.naturalHeight || 1);
-    effectiveZoom = Math.min(fitWidth, fitHeight, 1.5);
-  } else if (ppState.zoomMode === 'fitWidth') {
-    const vpWidth = vp.clientWidth - 40;
-    effectiveZoom = vpWidth / (img.naturalWidth || 1);
+  img.onload = function() {
+    applyZoom();
+  };
+  if (img.complete && img.naturalWidth > 0) {
+    applyZoom();
   }
-  
-  container.style.transform = `scale(${effectiveZoom})`;
-  container.style.transformOrigin = 'center top';
+
+  img.style.transform = rot ? `rotate(${rot}deg)` : '';
 
   document.getElementById('pp-page-counter').textContent = `${idx+1} / ${pages.length}`;
   document.getElementById('pp-prev-btn').disabled = idx === 0;
   document.getElementById('pp-next-btn').disabled = idx === pages.length - 1;
-
-  document.getElementById('pp-zoom-label').textContent = Math.round(effectiveZoom * 100) + '%';
 
   const isColor = effectiveColor(pg);
   document.getElementById('pp-info-strip').innerHTML =
     `Page ${pg.num} &nbsp;·&nbsp; ${sizeName(pg.sizeKey)} (${pg.widthIn.toFixed(2)}" × ${pg.heightIn.toFixed(2)}") &nbsp;·&nbsp;
      <span class="badge ${isColor?'badge-color':'badge-bw'}" style="font-size:10px;">${isColor?'🎨 Color':'⬛ B&W'}</span>
      ${rot ? `&nbsp;·&nbsp; Rotated ${rot}°` : ''}`;
+}
+
+function applyZoom() {
+  const container = document.getElementById('pp-page-container');
+  const vp = document.getElementById('pp-viewport');
+  const img = document.getElementById('pp-current-img');
+  if (!vp || !img) return;
+
+  const vpWidth = vp.clientWidth - 40;
+  const vpHeight = vp.clientHeight - 40;
+  let effectiveZoom = ppState.zoom;
+
+  if (ppState.zoomMode === 'fit') {
+    const imgW = img.naturalWidth || 1;
+    const imgH = img.naturalHeight || 1;
+    const fitWidth = vpWidth / imgW;
+    const fitHeight = vpHeight / imgH;
+    effectiveZoom = Math.min(fitWidth, fitHeight, 1.5);
+  } else if (ppState.zoomMode === 'fitWidth') {
+    const imgW = img.naturalWidth || 1;
+    effectiveZoom = vpWidth / imgW;
+  } else {
+    effectiveZoom = ppState.zoom;
+  }
+
+  container.style.transform = `scale(${effectiveZoom})`;
+  container.style.transformOrigin = 'center top';
+  document.getElementById('pp-zoom-label').textContent = Math.round(effectiveZoom * 100) + '%';
 }
 
 window.ppPrevPage = function() {
@@ -569,14 +644,14 @@ window.ppNextPage = function() {
 window.ppZoom = function(delta) {
   ppState.zoomMode = 'custom';
   ppState.zoom = Math.min(3.0, Math.max(0.3, ppState.zoom + delta));
-  ppRenderCurrentPage();
+  applyZoom();
 };
 
 window.ppZoomMode = function(mode) {
   if (!['fit', 'fitWidth', 'custom'].includes(mode)) return;
   ppState.zoomMode = mode;
   if (mode === 'custom') ppState.zoom = 1.0;
-  ppRenderCurrentPage();
+  applyZoom();
 };
 
 window.ppRotate = function(deg) {
@@ -611,52 +686,16 @@ window.ppSetDuplex = function(mode) {
   ppState.duplex = mode;
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-  const vp = document.getElementById('pp-viewport');
-  if (vp) {
-    vp.addEventListener('wheel', e => {
-      if (document.getElementById('print-preview-modal').style.display === 'flex') {
-        e.preventDefault();
-        ppZoom(e.deltaY < 0 ? 0.1 : -0.1);
-      }
-    }, { passive: false });
-  }
-});
-
-window.openPrintPreferences = async function() {
-  const printData = {
-    pages: ppState.pages.map((pg, i) => ({
-      dataUrl: pg.printImg,
-      widthPt: pg.widthPt,
-      heightPt: pg.heightPt,
-      num: pg.num,
-      colored: effectiveColor(pg),
-      rotation: ppState.rotations[i] || 0
-    })),
-    printerName: ppState.printerName,
-    duplex: ppState.duplex,
-    scale: ppState.scale,
-    landscape: ppState.orientation === 'landscape'
-  };
-  
-  try {
-    const result = await window.api.printPdf(printData);
-    if (result?.ok) {
-      toast('Print job sent!');
-      closePrintPreview();
-    } else if (result?.error && result.error !== 'Cancelled') {
-      toast('Print error: ' + result.error);
-    }
-    // If cancelled, user just returns to preview
-  } catch (err) {
-    toast('Print failed: ' + err.message);
-  }
-};
-
 window.confirmPrint = async function() {
   const btn = document.getElementById('pp-print-btn');
   const originalText = btn.innerHTML;
   btn.textContent = 'Printing...'; btn.disabled = true;
+
+  for (const pg of ppState.pages) {
+    if (!pg.printImg) {
+      pg.printImg = await pg._printFn();
+    }
+  }
 
   const printData = {
     pages: ppState.pages.map((pg, i) => ({
@@ -671,17 +710,28 @@ window.confirmPrint = async function() {
     duplex: ppState.duplex,
     scale: ppState.scale,
     landscape: ppState.orientation === 'landscape',
-    silent: true // Key: silent print, no native dialog
+    silent: true
   };
 
   try {
     const result = await window.api.printPdf(printData);
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2H6z"/></svg> Printed!`;
+    
+    // Reset button
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Print Now`;
     btn.disabled = false;
 
-    if (result?.ok) { closePrintPreview(); toast('Print job sent!'); }
-    else if (result?.error && result.error !== 'Cancelled') { toast('Print error: ' + result.error); }
-    else { closePrintPreview(); }
+    if (result?.ok) {
+      closePrintPreview();
+      if (result.fallback) {
+        toast('Print job prepared as PDF - opening for manual printing');
+      } else {
+        toast('Print job sent!');
+      }
+    } else if (result?.error) {
+      toast('Print error: ' + result.error);
+    } else {
+      closePrintPreview();
+    }
   } catch (err) {
     btn.innerHTML = originalText;
     btn.disabled = false;
@@ -692,6 +742,9 @@ window.confirmPrint = async function() {
 window.closePrintPreview = function() {
   document.getElementById('print-preview-modal').style.display = 'none';
   pendingPrintData = null;
+  const btn = document.getElementById('pp-print-btn');
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Print Now`;
+  btn.disabled = false;
 };
 
 // ===== QUOTE =====
@@ -767,14 +820,14 @@ function populateSettings(s) {
   const p = s.pricing||state.pricing;
   document.getElementById('p-bw-letter').value = validateNumber(p.bw?.letter, 0, 999) || 3;
   document.getElementById('p-bw-legal').value = validateNumber(p.bw?.legal, 0, 999) || 4;
+  document.getElementById('p-bw-a4').value = validateNumber(p.bw?.a4, 0, 999) || 3;
   document.getElementById('p-bw-a3').value = validateNumber(p.bw?.a3, 0, 999) || 6;
   document.getElementById('p-bw-tabloid').value = validateNumber(p.bw?.tabloid, 0, 999) || 8;
-  document.getElementById('p-bw-custom85x13').value = validateNumber(p.bw?.custom_85x13, 0, 999) || 3.5;
   document.getElementById('p-color-letter').value = validateNumber(p.color?.letter, 0, 999) || 15;
   document.getElementById('p-color-legal').value = validateNumber(p.color?.legal, 0, 999) || 20;
+  document.getElementById('p-color-a4').value = validateNumber(p.color?.a4, 0, 999) || 15;
   document.getElementById('p-color-a3').value = validateNumber(p.color?.a3, 0, 999) || 30;
   document.getElementById('p-color-tabloid').value = validateNumber(p.color?.tabloid, 0, 999) || 40;
-  document.getElementById('p-color-custom85x13').value = validateNumber(p.color?.custom_85x13, 0, 999) || 17.5;
   document.getElementById('s-default-size').value = p.defaultSize||'letter';
   document.getElementById('s-show-tax').checked = !!s.showTax;
   document.getElementById('tax-row').style.display = s.showTax?'flex':'none';
@@ -782,64 +835,83 @@ function populateSettings(s) {
   document.getElementById('s-color-sensitivity').value = validateNumber(s.colorSensitivity, 1, 10) || 5;
   document.getElementById('s-dark').checked = s.theme==='dark';
   updateCurrencySymbols(validateString(s.currency||'₱', 5));
+  // Default printer is set in loadDefaultPrinterList, not here
 }
-function updateCurrencySymbols(sym) { for (let i=1;i<=10;i++) { const el=document.getElementById('cs'+i); if(el) el.textContent=escapeHtml(sym); } }
 
 window.saveSettings = async function() {
   try {
     const pin = document.getElementById('s-pin').value;
     const pin2 = document.getElementById('s-pin2').value;
     if (pin||pin2) {
-      if (pin.length!==4||!/^\d{4}$/.test(pin)) { document.getElementById('pin-status').textContent='⚠ PIN must be 4 digits.'; document.getElementById('pin-status').style.color='var(--danger)'; return; }
-      if (pin!==pin2) { document.getElementById('pin-status').textContent='⚠ PINs do not match.'; document.getElementById('pin-status').style.color='var(--danger)'; return; }
-      const result = await window.api.setPin(pin);
-      if (result.ok) {
-        document.getElementById('pin-status').textContent='✓ PIN saved securely.'; document.getElementById('pin-status').style.color='var(--success)';
-      } else {
-        document.getElementById('pin-status').textContent='⚠ ' + result.error; document.getElementById('pin-status').style.color='var(--danger)';
+      if (pin.length!==4||!/^\d{4}$/.test(pin)) {
+        document.getElementById('pin-status').textContent='⚠ PIN must be 4 digits.';
+        document.getElementById('pin-status').style.color='var(--danger)';
         return;
       }
-      document.getElementById('s-pin').value=''; document.getElementById('s-pin2').value='';
+      if (pin!==pin2) {
+        document.getElementById('pin-status').textContent='⚠ PINs do not match.';
+        document.getElementById('pin-status').style.color='var(--danger)';
+        return;
+      }
+      const result = await window.api.setPin(pin);
+      if (result.ok) {
+        document.getElementById('pin-status').textContent='✓ PIN saved securely.';
+        document.getElementById('pin-status').style.color='var(--success)';
+      } else {
+        document.getElementById('pin-status').textContent='⚠ ' + result.error;
+        document.getElementById('pin-status').style.color='var(--danger)';
+        return;
+      }
+      document.getElementById('s-pin').value='';
+      document.getElementById('s-pin2').value='';
     }
     const cur = validateString(document.getElementById('s-currency').value||'₱', 5);
     const pricing = {
-      bw:{
-        letter:validateNumber(document.getElementById('p-bw-letter').value, 0, 999),
-        legal:validateNumber(document.getElementById('p-bw-legal').value, 0, 999),
-        a3:validateNumber(document.getElementById('p-bw-a3').value, 0, 999),
-        tabloid:validateNumber(document.getElementById('p-bw-tabloid').value, 0, 999),
-        custom_85x13:validateNumber(document.getElementById('p-bw-custom85x13').value, 0, 999)
+      bw: {
+        letter: validateNumber(document.getElementById('p-bw-letter').value, 0, 999),
+        legal: validateNumber(document.getElementById('p-bw-legal').value, 0, 999),
+        a4: validateNumber(document.getElementById('p-bw-a4').value, 0, 999),
+        a3: validateNumber(document.getElementById('p-bw-a3').value, 0, 999),
+        tabloid: validateNumber(document.getElementById('p-bw-tabloid').value, 0, 999)
       },
-      color:{
-        letter:validateNumber(document.getElementById('p-color-letter').value, 0, 999),
-        legal:validateNumber(document.getElementById('p-color-legal').value, 0, 999),
-        a3:validateNumber(document.getElementById('p-color-a3').value, 0, 999),
-        tabloid:validateNumber(document.getElementById('p-color-tabloid').value, 0, 999),
-        custom_85x13:validateNumber(document.getElementById('p-color-custom85x13').value, 0, 999)
+      color: {
+        letter: validateNumber(document.getElementById('p-color-letter').value, 0, 999),
+        legal: validateNumber(document.getElementById('p-color-legal').value, 0, 999),
+        a4: validateNumber(document.getElementById('p-color-a4').value, 0, 999),
+        a3: validateNumber(document.getElementById('p-color-a3').value, 0, 999),
+        tabloid: validateNumber(document.getElementById('p-color-tabloid').value, 0, 999)
       }
     };
-    const bizName=validateString(document.getElementById('s-biz-name').value, 100);
-    const address=validateString(document.getElementById('s-address').value, 200);
-    const contact=validateString(document.getElementById('s-contact').value, 100);
-    const showTax=document.getElementById('s-show-tax').checked;
-    const taxRate=validateNumber(document.getElementById('s-tax-rate').value, 0, 100);
-    const colorSensitivity=validateNumber(document.getElementById('s-color-sensitivity').value, 1, 10);
-    const theme=document.getElementById('s-dark').checked?'dark':'light';
-    await window.api.setStore('businessName',bizName);
-    await window.api.setStore('address',address);
-    await window.api.setStore('contact',contact);
-    await window.api.setStore('currency',cur);
-    await window.api.setStore('pricing',pricing);
-    await window.api.setStore('showTax',showTax);
-    await window.api.setStore('taxRate',taxRate);
-    await window.api.setStore('colorSensitivity',colorSensitivity);
-    await window.api.setStore('theme',theme);
-    state.pricing=pricing;
-    state.currency=cur;
-    state.settings={...state.settings,businessName:bizName,address,contact,currency:cur,pricing,showTax,taxRate,colorSensitivity,theme};
+    pricing.bw.custom_85x13 = state.pricing.bw.custom_85x13 || 3.5;
+    pricing.color.custom_85x13 = state.pricing.color.custom_85x13 || 17.5;
+
+    const bizName = validateString(document.getElementById('s-biz-name').value, 100);
+    const address = validateString(document.getElementById('s-address').value, 200);
+    const contact = validateString(document.getElementById('s-contact').value, 100);
+    const showTax = document.getElementById('s-show-tax').checked;
+    const taxRate = validateNumber(document.getElementById('s-tax-rate').value, 0, 100);
+    const colorSensitivity = validateNumber(document.getElementById('s-color-sensitivity').value, 1, 10);
+    const theme = document.getElementById('s-dark').checked?'dark':'light';
+    const defaultPrinter = document.getElementById('s-default-printer').value;
+
+    await window.api.setStore('businessName', bizName);
+    await window.api.setStore('address', address);
+    await window.api.setStore('contact', contact);
+    await window.api.setStore('currency', cur);
+    await window.api.setStore('pricing', pricing);
+    await window.api.setStore('showTax', showTax);
+    await window.api.setStore('taxRate', taxRate);
+    await window.api.setStore('colorSensitivity', colorSensitivity);
+    await window.api.setStore('theme', theme);
+    await window.api.setStore('defaultPrinter', defaultPrinter);
+
+    state.pricing = pricing;
+    state.currency = cur;
+    state.settings = { ...state.settings, businessName: bizName, address, contact, currency: cur, pricing, showTax, taxRate, colorSensitivity, theme, defaultPrinter };
+
     document.getElementById('sb-biz-name').textContent = bizName || 'My Print Shop';
     document.getElementById('sb-biz-avatar').textContent = (bizName || 'M').charAt(0).toUpperCase();
-    document.getElementById('sb-biz-contact').textContent=contact||'';
+    document.getElementById('sb-biz-contact').textContent = contact || '';
     updateCurrencySymbols(cur);
     applyTheme(theme);
     toast('Settings saved!');
@@ -860,6 +932,13 @@ window.clearPin = async function() {
   }
 };
 
+function updateCurrencySymbols(sym) {
+  for (let i = 1; i <= 10; i++) {
+    const el = document.getElementById('cs' + i);
+    if (el) el.textContent = escapeHtml(sym);
+  }
+}
+
 // ===== PAGE PREVIEW MODAL =====
 let previewIdx = 0;
 window.openPreview = function(idx) { previewIdx=idx; showPreview(); document.getElementById('preview-modal').style.display='flex'; };
@@ -869,13 +948,22 @@ function showPreview() {
   const pages=activePdf()?.pages||[];
   const p=pages[previewIdx];
   if (!p) return;
-  document.getElementById('preview-img').src=p.full||p.thumb;
+  if (!p.full) {
+    p._fullFn().then(url => {
+      p.full = url;
+      document.getElementById('preview-img').src = url;
+    });
+    document.getElementById('preview-img').src = p.thumb || '';
+  } else {
+    document.getElementById('preview-img').src = p.full;
+  }
   const isColor=effectiveColor(p);
   document.getElementById('preview-label').innerHTML=`Page ${p.num} of ${pages.length} &nbsp;·&nbsp; <span class="badge ${isColor?'badge-color':'badge-bw'}" style="font-size:12px;">${isColor?'🎨 Color':'⬛ B&W'}</span>`;
   document.getElementById('prev-pg').disabled=previewIdx===0;
   document.getElementById('next-pg').disabled=previewIdx===pages.length-1;
 }
 
+// ===== KEYBOARD SHORTCUTS =====
 document.addEventListener('keydown', e => {
   if (document.getElementById('preview-modal').style.display==='flex') {
     if (e.key==='ArrowLeft') shiftPreview(-1);
@@ -889,6 +977,22 @@ document.addEventListener('keydown', e => {
     if (e.key==='+'||e.key==='=') ppZoom(0.15);
     if (e.key==='-') ppZoom(-0.15);
     if (e.key==='0') ppZoomMode('fit');
+  }
+});
+
+// ===== CTRL + MOUSE WHEEL ZOOM =====
+document.addEventListener('DOMContentLoaded', () => {
+  const vp = document.getElementById('pp-viewport');
+  if (vp) {
+    vp.addEventListener('wheel', e => {
+      if (document.getElementById('print-preview-modal').style.display === 'flex') {
+        if (e.ctrlKey) {
+          e.preventDefault();
+          ppZoom(e.deltaY < 0 ? 0.15 : -0.15);
+        }
+        // else let scroll happen normally
+      }
+    }, { passive: false });
   }
 });
 
